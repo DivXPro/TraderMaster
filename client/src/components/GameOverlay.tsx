@@ -4,7 +4,7 @@ import type { Bet as BetBox } from '@trader-master/shared';
 
 interface GameOverlayProps {
     chart: IChartApi;
-    series: ISeriesApi<"Candlestick">;
+    series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
     socket: any;
 }
 
