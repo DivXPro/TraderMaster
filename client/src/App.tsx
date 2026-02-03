@@ -7,7 +7,7 @@ import { GameOverlay } from './components/GameOverlay';
 import './components/GameOverlay.css';
 import './App.css';
 
-const socket = io('http://localhost:3001');
+const socket = io(); // Connect to same host/port (proxied)
 
 function App() {
   const chartContainerRef = useRef<HTMLDivElement>(null);

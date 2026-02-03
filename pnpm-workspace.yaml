@@ -1,4 +1,7 @@
 packages:
-  - 'client'
-  - 'server'
-  - 'shared'
+  - client
+  - server
+  - shared
+
+ignoredBuiltDependencies:
+  - esbuild
