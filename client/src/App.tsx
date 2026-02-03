@@ -35,8 +35,15 @@ function App() {
         timeVisible: true,
         secondsVisible: true,
         shiftVisibleRangeOnNewBar: true,
-        // Default zoom level (bar spacing in pixels)
-        barSpacing: 12, 
+        // Adjust barSpacing to make grid blocks square
+        // Calculation: 
+        // Chart Height (500) - TimeScale (~26) = ~474px
+        // Vertical Content: 474 * 0.8 (margins) = ~380px
+        // Target Blocks Vertical: 8
+        // Block Height: 380 / 8 = 47.5px
+        // Block Width (Time): 60 seconds (60 bars)
+        // BarSpacing: 47.5 / 60 ≈ 0.79 px
+        barSpacing: 0.79, 
         // Default right offset (empty space on the right in bars)
         rightOffset: 20, 
       },
@@ -53,9 +60,32 @@ function App() {
       },
     });
     
-    // Initial scroll position is now handled by rightOffset, 
-    // but we can enforce a specific logical range if needed.
-    // chart.timeScale().scrollToPosition(0, true);
+    // Keep the latest bar in the middle of the chart by adding a large right offset
+    // This effectively creates empty space on the right side
+    // We'll update this dynamically if needed, but a fixed value is a good start
+    // chart.timeScale().scrollToPosition(50, false);
+
+    // Custom Autoscale strategy to ensure we see exactly ~8 grid blocks vertically
+    // This fixes the vertical scale so that 1 block (0.5 price units) has a constant height in pixels.
+    // Combined with the fixed barSpacing, this ensures the grid is square.
+    const autoscaleStrategy = (original: () => any) => {
+        const res = original();
+        if (res === null) return null;
+
+        const TARGET_VISUAL_RANGE = 4.0; // 8 blocks * 0.5
+        
+        // Calculate center of the current data
+        const center = (res.priceRange.minValue + res.priceRange.maxValue) / 2;
+        const half = TARGET_VISUAL_RANGE / 2;
+
+        return {
+            priceRange: {
+                minValue: center - half,
+                maxValue: center + half,
+            },
+            margins: res.margins,
+        };
+    };
 
     let series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
 
@@ -66,11 +96,13 @@ function App() {
         borderVisible: false,
         wickUpColor: '#26a69a',
         wickDownColor: '#ef5350',
+        autoscaleInfoProvider: autoscaleStrategy,
       });
     } else {
       series = chart.addSeries(LineSeries, {
         color: '#2962FF',
         lineWidth: 2,
+        autoscaleInfoProvider: autoscaleStrategy,
       });
     }
 
