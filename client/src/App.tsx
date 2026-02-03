@@ -34,8 +34,28 @@ function App() {
       timeScale: {
         timeVisible: true,
         secondsVisible: true,
-      }
+        shiftVisibleRangeOnNewBar: true,
+        // Default zoom level (bar spacing in pixels)
+        barSpacing: 12, 
+        // Default right offset (empty space on the right in bars)
+        rightOffset: 20, 
+      },
+      // Price scale configuration to adjust vertical range
+      rightPriceScale: {
+        // scaleMargins controls the empty space top and bottom
+        scaleMargins: {
+          top: 0.1,    // 10% margin at top
+          bottom: 0.1, // 10% margin at bottom
+        },
+        // 'normal' | 'log' | 'percentage' | 'indexedTo100'
+        mode: 0, 
+        autoScale: true,
+      },
     });
+    
+    // Initial scroll position is now handled by rightOffset, 
+    // but we can enforce a specific logical range if needed.
+    // chart.timeScale().scrollToPosition(0, true);
 
     let series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
 
@@ -75,7 +95,6 @@ function App() {
         }));
         (series as ISeriesApi<"Line">).setData(data);
       }
-      chart.timeScale().fitContent();
     }
 
     const handleResize = () => {
@@ -117,7 +136,8 @@ function App() {
       }
       
       if (chartApi) {
-        chartApi.timeScale().fitContent();
+        // Don't refit content on every update to keep the user's scroll position or our default offset
+        // chartApi.timeScale().fitContent(); 
       }
     };
 

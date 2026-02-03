@@ -1,67 +1,42 @@
 import React, { useEffect, useState, useRef } from 'react';
-import type { IChartApi, ISeriesApi, Time, UTCTimestamp } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, ITimeScaleApi, Time, UTCTimestamp } from 'lightweight-charts';
+import { Socket } from 'socket.io-client';
 import type { Bet as BetBox } from '@trader-master/shared';
 
 interface GameOverlayProps {
     chart: IChartApi;
     series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
-    socket: any;
+    socket: Socket;
     lastTime: number | null;
 }
 
-interface Point {
-    x: number;
-    y: number;
-}
 
 export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket, lastTime }) => {
-    const [isDrawing, setIsDrawing] = useState(false);
-    const [startPoint, setStartPoint] = useState<Point | null>(null);
-    const [currentPoint, setCurrentPoint] = useState<Point | null>(null);
     const [bets, setBets] = useState<BetBox[]>([]);
     const overlayRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     
     // Grid settings
-    const TIME_GRID_STEP = 10; // seconds
-    const PRICE_GRID_STEP = 0.01;
+    const TIME_GRID_STEP = 60; // seconds
+    const PRICE_GRID_STEP = 0.5;
 
     // Sync bets position on chart scroll/zoom
     const [renderTrigger, setRenderTrigger] = useState(0);
 
     const drawGridColumn = (
         ctx: CanvasRenderingContext2D,
-        timeScale: any,
         series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">,
         t: number,
         pStart: number,
         pEnd: number,
-        widthPx: number,
+        x1: number,
+        x2: number,
         lastTime: number | null
     ) => {
-        const x1 = timeScale.timeToCoordinate(t as UTCTimestamp);
-        const x2 = timeScale.timeToCoordinate((t + TIME_GRID_STEP) as UTCTimestamp);
+        // Skip if width is too small or invalid
+        if (x2 <= x1) return;
         
-        // Skip if completely invalid
-        if (x1 === null && x2 === null) return;
-        
-        // Handle partial visibility or future
-        const finalX1 = x1;
-        let finalX2 = x2;
-        
-        if (finalX1 === null) {
-            // Try to recover? Maybe off-screen left.
-            // If t is within [tStart, tEnd], it should be near screen.
-            return; 
-        }
-        if (finalX2 === null) {
-            // Likely off-screen right. Use canvas width?
-            // Or calculate based on average width?
-            // Let's just use canvas width + margin to be safe.
-            finalX2 = (widthPx + 100) as any; 
-        }
-
-        const w = (finalX2 as number) - (finalX1 as number);
+        const w = x2 - x1;
         
         // Determine Color
         // If t < lastTime (past) -> Gray
@@ -81,8 +56,14 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
             const rH = Math.abs(y1 - y2);
             
             // Draw with 1px gap to look like grid
-            ctx.fillRect(finalX1 + 1, rY + 1, w - 2, rH - 2);
+            ctx.fillRect(x1 + 1, rY + 1, w - 2, rH - 2);
         }
+    };
+
+    // Helper to format time for axis
+    const formatTimeAxis = (t: number) => {
+        const date = new Date(t * 1000);
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     };
 
     // Grid Drawing Logic
@@ -91,9 +72,14 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
         const overlay = overlayRef.current;
         if (!canvas || !overlay) return;
 
-        // Resize canvas to match overlay
-        const width = overlay.clientWidth;
-        const height = overlay.clientHeight;
+        // Get chart dimensions including scales
+        const priceScaleWidth = chart.priceScale('right').width();
+        const timeScaleHeight = chart.timeScale().height();
+
+        // Resize canvas to match overlay but exclude scales
+        // We assume overlay is 100% width/height of the container
+        const width = overlay.clientWidth - priceScaleWidth;
+        const height = overlay.clientHeight - timeScaleHeight;
         
         // Use device pixel ratio for sharp rendering
         const dpr = window.devicePixelRatio || 1;
@@ -113,19 +99,38 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
 
         // Find visible time range by sampling pixels
         const timeScale = chart.timeScale();
+        
+        // Check if chart is ready (has data and visible range)
+        if (timeScale.getVisibleLogicalRange() === null) return;
+
         const widthPx = width; // logical width
         
-        // Sample start and end time
-        // Note: coordinateToTime returns null if not in data? 
-        // We'll check visible logical range first to be safe, but coordinateToTime is easier for pixels.
+        // Sample start time
+        // Note: coordinateToTime returns null if not in data/not ready
         const startTime = timeScale.coordinateToTime(0) as number | null;
-        const endTime = timeScale.coordinateToTime(widthPx) as number | null;
         
-        if (startTime === null || endTime === null) return;
+        if (startTime === null) return;
+
+        // Calculate pixels per step (gridWidth)
+        let gridWidth = 0;
+        const xStart = timeScale.timeToCoordinate(startTime as UTCTimestamp);
+        const xNext = timeScale.timeToCoordinate((startTime + TIME_GRID_STEP) as UTCTimestamp);
+        
+        if (xStart !== null && xNext !== null) {
+            gridWidth = xNext - xStart;
+        } else {
+             // Try going backwards if we are at the end
+             const xPrev = timeScale.timeToCoordinate((startTime - TIME_GRID_STEP) as UTCTimestamp);
+             if (xStart !== null && xPrev !== null) {
+                 gridWidth = xStart - xPrev;
+             }
+        }
+        
+        // Default minimal width to prevent infinite loops or freeze
+        if (gridWidth <= 1) gridWidth = 10; 
 
         // Align to grid step
-        const tStart = Math.floor(startTime / TIME_GRID_STEP) * TIME_GRID_STEP;
-        const tEnd = Math.ceil(endTime / TIME_GRID_STEP) * TIME_GRID_STEP;
+        let t = Math.floor(startTime / TIME_GRID_STEP) * TIME_GRID_STEP;
 
         // Price range
         const priceTop = series.coordinateToPrice(0);
@@ -140,8 +145,34 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
         const pEnd = Math.ceil(pMax / PRICE_GRID_STEP) * PRICE_GRID_STEP;
 
         // Draw Rects
-        for (let t = tStart; t <= tEnd; t += TIME_GRID_STEP) {
-            drawGridColumn(ctx, timeScale, series, t, pStart, pEnd, widthPx, lastTime);
+        // Calculate initial x1
+        let x1: number | null = timeScale.timeToCoordinate(t as UTCTimestamp);
+        
+        // If initial x1 is null (maybe slightly off screen), project from startTime
+        if (x1 === null && xStart !== null) {
+             const timeDiff = t - startTime;
+             x1 = xStart + (timeDiff / TIME_GRID_STEP) * gridWidth;
+        }
+        
+        // Safety check
+        if (x1 === null) x1 = 0;
+
+        let safety = 0;
+        while (x1 < widthPx && safety++ < 1000) {
+            const nextT = t + TIME_GRID_STEP;
+            let x2: number | null = timeScale.timeToCoordinate(nextT as UTCTimestamp);
+            
+            // If x2 is null, project it using gridWidth
+            if (x2 === null) {
+                x2 = x1 + gridWidth;
+            }
+            
+            // Draw grid column (visuals)
+            drawGridColumn(ctx, series, t, pStart, pEnd, x1, x2, lastTime);
+            
+            // Prepare for next iteration
+            t = nextT;
+            x1 = x2;
         }
     }, [chart, series, lastTime]);
 
@@ -156,6 +187,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
 
         chart.timeScale().subscribeVisibleLogicalRangeChange(handleTimeScaleChange);
         chart.timeScale().subscribeVisibleTimeRangeChange(handleTimeScaleChange);
+        chart.timeScale().subscribeSizeChange(handleTimeScaleChange);
 
         socket.on('bet_placed', (bet: BetBox) => {
             setBets(prev => [...prev, bet]);
@@ -168,65 +200,11 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
         return () => {
             chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleTimeScaleChange);
             chart.timeScale().unsubscribeVisibleTimeRangeChange(handleTimeScaleChange);
+            chart.timeScale().unsubscribeSizeChange(handleTimeScaleChange);
             socket.off('bet_placed');
             socket.off('bet_update');
         };
     }, [chart, socket]);
-
-    const handleMouseDown = (e: React.MouseEvent) => {
-        const rect = overlayRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        
-        setIsDrawing(true);
-        setStartPoint({
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
-        });
-        setCurrentPoint({
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
-        });
-    };
-
-    const handleMouseMove = (e: React.MouseEvent) => {
-        if (!isDrawing) return;
-        const rect = overlayRef.current?.getBoundingClientRect();
-        if (!rect) return;
-
-        setCurrentPoint({
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
-        });
-    };
-
-    const handleMouseUp = () => {
-        if (!isDrawing || !startPoint || !currentPoint) {
-            setIsDrawing(false);
-            return;
-        }
-
-        // Convert coordinates to Time/Price
-        const startTime = chart.timeScale().coordinateToTime(Math.min(startPoint.x, currentPoint.x)) as UTCTimestamp | null;
-        const endTime = chart.timeScale().coordinateToTime(Math.max(startPoint.x, currentPoint.x)) as UTCTimestamp | null;
-        
-        const price1 = series.coordinateToPrice(startPoint.y);
-        const price2 = series.coordinateToPrice(currentPoint.y);
-
-        if (startTime !== null && endTime !== null && price1 !== null && price2 !== null) {
-            const bet = {
-                startTime: startTime,
-                endTime: endTime,
-                highPrice: Math.max(price1, price2),
-                lowPrice: Math.min(price1, price2)
-            };
-            console.log("Placing bet:", bet);
-            socket.emit('place_bet', bet);
-        }
-
-        setIsDrawing(false);
-        setStartPoint(null);
-        setCurrentPoint(null);
-    };
 
     // Helper to render a box
     const renderBox = (x1: number, y1: number, x2: number, y2: number, style: React.CSSProperties) => {
@@ -252,21 +230,11 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
         <div 
             ref={overlayRef}
             className="game-overlay"
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={() => setIsDrawing(false)}
         >
             <canvas 
                 ref={canvasRef}
-                style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: -1 }}
+                style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: 1 }}
             />
-
-            {/* Drawing Preview */}
-            {isDrawing && startPoint && currentPoint && renderBox(
-                startPoint.x, startPoint.y, currentPoint.x, currentPoint.y,
-                { border: '2px dashed #FFF', backgroundColor: 'rgba(255, 255, 255, 0.1)' }
-            )}
 
             {/* Active Bets */}
             {bets.map(bet => {
