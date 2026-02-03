@@ -29,6 +29,62 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
     // Sync bets position on chart scroll/zoom
     const [renderTrigger, setRenderTrigger] = useState(0);
 
+    const drawGridColumn = (
+        ctx: CanvasRenderingContext2D,
+        timeScale: any,
+        series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">,
+        t: number,
+        pStart: number,
+        pEnd: number,
+        widthPx: number,
+        lastTime: number | null
+    ) => {
+        const x1 = timeScale.timeToCoordinate(t as UTCTimestamp);
+        const x2 = timeScale.timeToCoordinate((t + TIME_GRID_STEP) as UTCTimestamp);
+        
+        // Skip if completely invalid
+        if (x1 === null && x2 === null) return;
+        
+        // Handle partial visibility or future
+        const finalX1 = x1;
+        let finalX2 = x2;
+        
+        if (finalX1 === null) {
+            // Try to recover? Maybe off-screen left.
+            // If t is within [tStart, tEnd], it should be near screen.
+            return; 
+        }
+        if (finalX2 === null) {
+            // Likely off-screen right. Use canvas width?
+            // Or calculate based on average width?
+            // Let's just use canvas width + margin to be safe.
+            finalX2 = (widthPx + 100) as any; 
+        }
+
+        const w = (finalX2 as number) - (finalX1 as number);
+        
+        // Determine Color
+        // If t < lastTime (past) -> Gray
+        // If t >= lastTime (future) -> Green
+        const isFuture = lastTime !== null && t >= lastTime;
+        const fillStyle = isFuture ? 'rgba(0, 255, 0, 0.1)' : 'rgba(128, 128, 128, 0.3)';
+        
+        ctx.fillStyle = fillStyle;
+
+        for (let p = pStart; p <= pEnd; p += PRICE_GRID_STEP) {
+            const y1 = series.priceToCoordinate(p);
+            const y2 = series.priceToCoordinate(p + PRICE_GRID_STEP);
+            
+            if (y1 === null || y2 === null) continue;
+            
+            const rY = Math.min(y1, y2);
+            const rH = Math.abs(y1 - y2);
+            
+            // Draw with 1px gap to look like grid
+            ctx.fillRect(finalX1 + 1, rY + 1, w - 2, rH - 2);
+        }
+    };
+
     // Grid Drawing Logic
     const drawGrid = React.useCallback(() => {
         const canvas = canvasRef.current;
@@ -85,52 +141,9 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
 
         // Draw Rects
         for (let t = tStart; t <= tEnd; t += TIME_GRID_STEP) {
-            const x1 = timeScale.timeToCoordinate(t as UTCTimestamp);
-            const x2 = timeScale.timeToCoordinate((t + TIME_GRID_STEP) as UTCTimestamp);
-            
-            // Skip if completely invalid
-            if (x1 === null && x2 === null) continue;
-            
-            // Handle partial visibility or future
-            const finalX1 = x1;
-            let finalX2 = x2;
-            
-            if (finalX1 === null) {
-                // Try to recover? Maybe off-screen left.
-                // If t is within [tStart, tEnd], it should be near screen.
-                continue; 
-            }
-            if (finalX2 === null) {
-                // Likely off-screen right. Use canvas width?
-                // Or calculate based on average width?
-                // Let's just use canvas width + margin to be safe.
-                finalX2 = (widthPx + 100) as any; 
-            }
-
-            const w = (finalX2 as number) - (finalX1 as number);
-            
-            // Determine Color
-            // If t < lastTime (past) -> Gray
-            // If t >= lastTime (future) -> Green
-            const isFuture = lastTime !== null && t >= lastTime;
-            const fillStyle = isFuture ? 'rgba(0, 255, 0, 0.1)' : 'rgba(128, 128, 128, 0.3)';
-            
-            ctx.fillStyle = fillStyle;
-
-            for (let p = pStart; p <= pEnd; p += PRICE_GRID_STEP) {
-                const y1 = series.priceToCoordinate(p);
-                const y2 = series.priceToCoordinate(p + PRICE_GRID_STEP);
-                
-                if (y1 === null || y2 === null) continue;
-                
-                const rY = Math.min(y1, y2);
-                const rH = Math.abs(y1 - y2);
-                
-                // Draw with 1px gap to look like grid
-                ctx.fillRect(finalX1 + 1, rY + 1, w - 2, rH - 2);
-            }
+            drawGridColumn(ctx, timeScale, series, t, pStart, pEnd, widthPx, lastTime);
         }
-    }, [chart, series, lastTime, renderTrigger]);
+    }, [chart, series, lastTime]);
 
     useEffect(() => {
         drawGrid();
