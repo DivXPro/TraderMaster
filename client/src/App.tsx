@@ -45,7 +45,8 @@ function App() {
         // BarSpacing: 47.5 / 60 ≈ 0.79 px
         barSpacing: 0.79, 
         // Default right offset (empty space on the right in bars)
-        rightOffset: 20, 
+        // We calculate this dynamically below, but set a safe default
+        rightOffset: 0, 
       },
       // Price scale configuration to adjust vertical range
       rightPriceScale: {
@@ -108,6 +109,22 @@ function App() {
 
     setChartApi(chart);
     setSeriesApi(series);
+    
+    // Initial centering logic
+    // We want the latest bar to be in the middle of the chart.
+    // The width of the chart in pixels is chartContainerRef.current.clientWidth.
+    // The barSpacing is 0.79.
+    // Half width in bars = (width / 2) / 0.79.
+    const width = chartContainerRef.current.clientWidth;
+    // Reduce slightly (e.g. -20) to account for price scale width if needed
+    const centerOffset = (width / 2) / 0.79;
+    
+    // Apply options to set the right offset
+    chart.applyOptions({
+        timeScale: {
+            rightOffset: centerOffset,
+        }
+    });
 
     // Initial Data Load
     if (marketData.length > 0) {
@@ -131,7 +148,16 @@ function App() {
 
     const handleResize = () => {
       if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+        const newWidth = chartContainerRef.current.clientWidth;
+        chart.applyOptions({ width: newWidth });
+        
+        // Update center offset on resize
+        const newCenterOffset = (newWidth / 2) / 0.79;
+        chart.applyOptions({
+            timeScale: {
+                rightOffset: newCenterOffset,
+            }
+        });
       }
     };
     window.addEventListener('resize', handleResize);
