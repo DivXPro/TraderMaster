@@ -258,6 +258,7 @@ function App() {
             series={seriesApi} // GameOverlay needs to support both or be generic
             socket={socket} 
             lastTime={marketData.length > 0 ? (marketData[marketData.length - 1].time as number) : null}
+            lastPrice={marketData.length > 0 ? marketData[marketData.length - 1].close : null}
           />
         )}
       </div>

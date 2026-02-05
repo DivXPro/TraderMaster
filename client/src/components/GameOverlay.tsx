@@ -1,64 +1,93 @@
 import React, { useEffect, useState, useRef } from 'react';
-import type { IChartApi, ISeriesApi, ITimeScaleApi, Time, UTCTimestamp } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, Time, UTCTimestamp } from 'lightweight-charts';
 import { Socket } from 'socket.io-client';
 import type { Bet as BetBox } from '@trader-master/shared';
+import { bsCallPrice, bsPutPrice, RISK_FREE_RATE, VOLATILITY } from '../utils/pricing';
 
 interface GameOverlayProps {
     chart: IChartApi;
     series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
     socket: Socket;
     lastTime: number | null;
+    lastPrice: number | null;
 }
 
+// Grid settings
+const TIME_GRID_STEP = 60; // seconds
+const PRICE_GRID_STEP = 0.5;
 
-export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket, lastTime }) => {
+const drawGridColumn = (
+    ctx: CanvasRenderingContext2D,
+    series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">,
+    t: number,
+    pStart: number,
+    pEnd: number,
+    x1: number,
+    x2: number,
+    lastTime: number | null,
+    lastPrice: number | null
+) => {
+    // Skip if width is too small or invalid
+    if (x2 <= x1) return;
+    
+    const w = x2 - x1;
+    
+    // Determine Color
+    // If t < lastTime (past) -> Gray
+    // If t >= lastTime (future) -> Green
+    const isFuture = lastTime !== null && t >= lastTime;
+    const fillStyle = isFuture ? 'rgba(0, 255, 0, 0.1)' : 'rgba(128, 128, 128, 0.3)';
+    
+    // Text style
+    const textFillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    for (let p = pStart; p <= pEnd; p += PRICE_GRID_STEP) {
+        const y1 = series.priceToCoordinate(p);
+        const y2 = series.priceToCoordinate(p + PRICE_GRID_STEP);
+        
+        if (y1 === null || y2 === null) continue;
+        
+        const rY = Math.min(y1, y2);
+        const rH = Math.abs(y1 - y2);
+        
+        // Draw with 1px gap to look like grid
+        ctx.fillStyle = fillStyle;
+        ctx.fillRect(x1 + 1, rY + 1, w - 2, rH - 2);
+        
+        // Calculate middle price
+        const midPrice = p + PRICE_GRID_STEP / 2;
+        
+        const maturitySec = lastTime !== null ? (t + TIME_GRID_STEP) - lastTime : TIME_GRID_STEP;
+        const T = Math.max(maturitySec, 0) / (365 * 24 * 3600);
+        
+        // Use lastPrice as S if available, otherwise fallback to midPrice (less accurate)
+        const S = lastPrice !== null ? lastPrice : midPrice;
+        const K = midPrice;
+        
+        // If K >= S (Box is above current price), calculate Call Price (Betting on price going up)
+        // If K < S (Box is below current price), calculate Put Price (Betting on price going down)
+        const optionPrice = K < S 
+            ? bsCallPrice(S, K, RISK_FREE_RATE, VOLATILITY, T)
+            : bsPutPrice(S, K, RISK_FREE_RATE, VOLATILITY, T);
+
+        // console.log(`Price: ${midPrice.toFixed(2)}, Option Price: ${optionPrice.toFixed(4)}`);
+        
+        ctx.fillStyle = textFillStyle;
+        ctx.fillText(midPrice.toFixed(2), x1 + w / 2, rY + rH / 2 - 6);
+        ctx.fillText(optionPrice.toFixed(4), x1 + w / 2, rY + rH / 2 + 8);
+    }
+};
+
+export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket, lastTime, lastPrice }) => {
     const [bets, setBets] = useState<BetBox[]>([]);
     const overlayRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     
-    // Grid settings
-    const TIME_GRID_STEP = 60; // seconds
-    const PRICE_GRID_STEP = 0.5;
-
     // Sync bets position on chart scroll/zoom
     const [renderTrigger, setRenderTrigger] = useState(0);
-
-    const drawGridColumn = (
-        ctx: CanvasRenderingContext2D,
-        series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">,
-        t: number,
-        pStart: number,
-        pEnd: number,
-        x1: number,
-        x2: number,
-        lastTime: number | null
-    ) => {
-        // Skip if width is too small or invalid
-        if (x2 <= x1) return;
-        
-        const w = x2 - x1;
-        
-        // Determine Color
-        // If t < lastTime (past) -> Gray
-        // If t >= lastTime (future) -> Green
-        const isFuture = lastTime !== null && t >= lastTime;
-        const fillStyle = isFuture ? 'rgba(0, 255, 0, 0.1)' : 'rgba(128, 128, 128, 0.3)';
-        
-        ctx.fillStyle = fillStyle;
-
-        for (let p = pStart; p <= pEnd; p += PRICE_GRID_STEP) {
-            const y1 = series.priceToCoordinate(p);
-            const y2 = series.priceToCoordinate(p + PRICE_GRID_STEP);
-            
-            if (y1 === null || y2 === null) continue;
-            
-            const rY = Math.min(y1, y2);
-            const rH = Math.abs(y1 - y2);
-            
-            // Draw with 1px gap to look like grid
-            ctx.fillRect(x1 + 1, rY + 1, w - 2, rH - 2);
-        }
-    };
 
     // Helper to format time for axis
     const formatTimeAxis = (t: number) => {
@@ -168,13 +197,13 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
             }
             
             // Draw grid column (visuals)
-            drawGridColumn(ctx, series, t, pStart, pEnd, x1, x2, lastTime);
+            drawGridColumn(ctx, series, t, pStart, pEnd, x1, x2, lastTime, lastPrice);
             
             // Prepare for next iteration
             t = nextT;
             x1 = x2;
         }
-    }, [chart, series, lastTime]);
+    }, [chart, series, lastTime, lastPrice]);
 
     useEffect(() => {
         drawGrid();
