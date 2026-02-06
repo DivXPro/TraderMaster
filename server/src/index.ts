@@ -64,16 +64,23 @@ setInterval(() => {
 
     bets.forEach(bet => {
         if (bet.status === 'pending') {
-            // Check if bet expired (we use the Close price at endTime to determine result)
-            if (now >= bet.endTime) {
-                // Determine Win/Loss
-                // Rule: If close price is within range [low, high] (inclusive)
-                if (candle.close >= bet.lowPrice && candle.close <= bet.highPrice) {
-                    bet.status = 'won';
-                } else {
-                    bet.status = 'lost';
-                }
+            // Check if active (time is within range)
+            if (now >= bet.startTime && now <= bet.endTime) {
+                // Instant Win Rule: If K-line passes through (intersects) the box
+                // Check intersection of [candle.low, candle.high] and [bet.lowPrice, bet.highPrice]
+                const overlap = Math.max(candle.low, bet.lowPrice) <= Math.min(candle.high, bet.highPrice);
                 
+                if (overlap) {
+                    bet.status = 'won';
+                    io.emit('bet_update', bet);
+                    betsChanged = true;
+                    return; // Stop processing this bet
+                }
+            }
+
+            // Check if bet expired and still pending (meaning it didn't win)
+            if (now >= bet.endTime) {
+                bet.status = 'lost';
                 io.emit('bet_update', bet);
                 betsChanged = true;
             }

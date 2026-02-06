@@ -8,6 +8,7 @@ export interface Candle {
 
 export interface Bet {
     id: string;
+    cellId?: string; // Unique ID for the grid cell
     startTime: number;
     endTime: number;
     highPrice: number;
