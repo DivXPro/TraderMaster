@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
-import type { IChartApi, ISeriesApi, Time, UTCTimestamp, MouseEventParams } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, UTCTimestamp, MouseEventParams } from 'lightweight-charts';
 import { Socket } from 'socket.io-client';
 import type { Bet as BetBox } from '@trader-master/shared';
 import { bsCallPrice, bsPutPrice, RISK_FREE_RATE, VOLATILITY } from '../utils/pricing';
+import { Application, Graphics, Text, TextStyle, Container } from 'pixi.js';
 
 interface GameOverlayProps {
     chart: IChartApi;
@@ -21,140 +22,14 @@ const getGridId = (startTime: number, lowPrice: number) => {
     return `cell_${startTime}_${lowPrice.toFixed(2)}`;
 };
 
-const drawGridColumn = (
-    ctx: CanvasRenderingContext2D,
-    series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">,
-    t: number,
-    pStart: number,
-    pEnd: number,
-    x1: number,
-    x2: number,
-    lastTime: number | null,
-    lastPrice: number | null,
-    betsMap: Map<string, BetBox>
-) => {
-    // Skip if width is too small or invalid
-    if (x2 <= x1) return;
-    
-    const w = x2 - x1;
-    
-    // Determine Color and State (Default)
-    // Status 1: Past/Current - t < lastTime -> High Transparency
-    // Status 2: Locked/Unbetable (Dark Gray) - t >= lastTime but <= lastTime + 10s
-    // Status 3: Betable (Green) - t > lastTime + 10s
-    
-    let defaultFillStyle = 'rgba(0, 0, 0, 0)'; // Transparent fill
-    let defaultStrokeStyle = 'rgba(0, 255, 0, 0.3)'; // Green Border for Betable
-    let defaultTextFillStyle = 'rgba(255, 255, 255, 0.6)';
-    let isPast = false;
-    
-    if (lastTime !== null) {
-        if (t < lastTime) {
-            // Past - High transparency
-            defaultFillStyle = 'rgba(128, 128, 128, 0.05)'; 
-            defaultStrokeStyle = 'rgba(128, 128, 128, 0.1)';
-            defaultTextFillStyle = 'rgba(255, 255, 255, 0.1)';
-            isPast = true;
-        } else if (t <= lastTime + 10) {
-            // Locked / Unbetable
-            defaultFillStyle = 'rgba(60, 60, 60, 0.5)'; // Keep fill for locked to indicate unavailable
-            defaultStrokeStyle = 'rgba(60, 60, 60, 0.8)';
-            defaultTextFillStyle = 'rgba(255, 255, 255, 0.2)'; // Dim text
-        }
-    }
-    
-    // Text style
-    ctx.font = '10px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    for (let p = pStart; p <= pEnd; p += PRICE_GRID_STEP) {
-        const y1 = series.priceToCoordinate(p);
-        const y2 = series.priceToCoordinate(p + PRICE_GRID_STEP);
-        
-        if (y1 === null || y2 === null) continue;
-        
-        const rY = Math.min(y1, y2);
-        const rH = Math.abs(y1 - y2);
-        
-        // Generate unique ID for this grid cell
-        const cellId = getGridId(t, p);
-        const bet = betsMap.get(cellId);
-
-        let fillStyle = defaultFillStyle;
-        let strokeStyle = defaultStrokeStyle;
-        let shadowBlur = 0;
-        let shadowColor = 'transparent';
-        let lineWidth = 1;
-
-        // Override styles if bet exists
-        if (bet) {
-             if (bet.status === 'won') {
-                 fillStyle = 'rgba(46, 204, 113, 0.3)'; // Won: Green
-                 strokeStyle = 'rgba(46, 204, 113, 1)';
-                 shadowBlur = 10;
-                 shadowColor = 'rgba(46, 204, 113, 0.4)';
-                 lineWidth = 2;
-             } else if (bet.status === 'lost') {
-                 fillStyle = 'rgba(231, 76, 60, 0.3)'; // Lost: Red
-                 strokeStyle = 'rgba(231, 76, 60, 0.8)';
-             } else {
-                 // Pending: Gold
-                 fillStyle = 'rgba(255, 215, 0, 0.2)';
-                 strokeStyle = 'rgba(255, 215, 0, 0.8)';
-                 shadowBlur = 5;
-                 shadowColor = 'rgba(255, 215, 0, 0.2)';
-             }
-        }
-        
-        // Save context for shadow
-        ctx.save();
-        if (shadowBlur > 0) {
-            ctx.shadowBlur = shadowBlur;
-            ctx.shadowColor = shadowColor;
-        }
-
-        // Draw Grid Cell
-        ctx.fillStyle = fillStyle;
-        ctx.fillRect(x1 + 1, rY + 1, w - 2, rH - 2);
-        
-        // Draw Border
-        ctx.strokeStyle = strokeStyle;
-        ctx.lineWidth = lineWidth;
-        ctx.strokeRect(x1 + 1, rY + 1, w - 2, rH - 2);
-        
-        ctx.restore();
-        
-        // Draw Text (Option Price or Result?)
-        // Currently keeping Option Price. 
-        // Note: For 'Past' cells, we might want to hide it if no bet, but keeping as is.
-        
-        // Calculate middle price
-        const midPrice = p + PRICE_GRID_STEP / 2;
-        
-        const maturitySec = lastTime !== null ? (t + TIME_GRID_STEP) - lastTime : TIME_GRID_STEP;
-        const T = Math.max(maturitySec, 0) / (365 * 24 * 3600);
-        
-        // Use lastPrice as S if available, otherwise fallback to midPrice (less accurate)
-        const S = lastPrice !== null ? lastPrice : midPrice;
-        const K = midPrice;
-        
-        const optionPrice = K < S 
-            ? bsCallPrice(S, K, RISK_FREE_RATE, VOLATILITY, T)
-            : bsPutPrice(S, K, RISK_FREE_RATE, VOLATILITY, T);
-
-        ctx.fillStyle = defaultTextFillStyle;
-        // If bet exists, maybe bold the text or change color?
-        if (bet) ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-        
-        ctx.fillText(optionPrice.toFixed(4), x1 + w / 2, rY + rH / 2);
-    }
-};
-
 export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket, lastTime, lastPrice }) => {
     const [bets, setBets] = useState<BetBox[]>([]);
     const overlayRef = useRef<HTMLDivElement>(null);
-    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const appRef = useRef<Application | null>(null);
+    const gridGraphicsRef = useRef<Graphics | null>(null);
+    const textContainerRef = useRef<Container | null>(null);
+    
+    const [pixiReady, setPixiReady] = useState(false);
     
     // Sync bets position on chart scroll/zoom
     const [renderTrigger, setRenderTrigger] = useState(0);
@@ -164,6 +39,48 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
     useEffect(() => {
         lastTimeRef.current = lastTime;
     }, [lastTime]);
+
+    // Initialize Pixi Application
+    useEffect(() => {
+        if (!overlayRef.current) return;
+
+        const initPixi = async () => {
+            const app = new Application();
+            await app.init({ 
+                // resizeTo: overlayRef.current!, // Removed to avoid conflict with manual resize
+                backgroundAlpha: 0,
+                resolution: window.devicePixelRatio || 1,
+                autoDensity: true,
+                antialias: true
+            });
+            
+            if (overlayRef.current) {
+                overlayRef.current.appendChild(app.canvas);
+            }
+            
+            // Create Graphics for Grid
+            const graphics = new Graphics();
+            app.stage.addChild(graphics);
+            gridGraphicsRef.current = graphics;
+
+            // Create Container for Text
+            const textContainer = new Container();
+            app.stage.addChild(textContainer);
+            textContainerRef.current = textContainer;
+
+            appRef.current = app;
+            setPixiReady(true);
+        };
+
+        initPixi();
+
+        return () => {
+            if (appRef.current) {
+                appRef.current.destroy(true);
+                appRef.current = null;
+            }
+        };
+    }, []);
 
     // Handle Chart Clicks for Betting
     useEffect(() => {
@@ -247,17 +164,16 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
         };
     }, [chart, series, socket]);
 
-    // Helper to format time for axis
-    const formatTimeAxis = (t: number) => {
-        const date = new Date(t * 1000);
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    };
-
     // Grid Drawing Logic
     const drawGrid = React.useCallback(() => {
-        const canvas = canvasRef.current;
+        if (!pixiReady || !appRef.current || !gridGraphicsRef.current || !textContainerRef.current) return;
+        
+        const app = appRef.current;
+        const graphics = gridGraphicsRef.current;
+        const textContainer = textContainerRef.current;
         const overlay = overlayRef.current;
-        if (!canvas || !overlay) return;
+        
+        if (!overlay) return;
 
         // Get chart dimensions including scales
         const priceScaleWidth = chart.priceScale('right').width();
@@ -268,21 +184,37 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
         const width = overlay.clientWidth - priceScaleWidth;
         const height = overlay.clientHeight - timeScaleHeight;
         
-        // Use device pixel ratio for sharp rendering
-        const dpr = window.devicePixelRatio || 1;
-        if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
-            canvas.width = width * dpr;
-            canvas.height = height * dpr;
-            canvas.style.width = `${width}px`;
-            canvas.style.height = `${height}px`;
+        // Resize Pixi app if needed
+        if (app.canvas.width !== width * window.devicePixelRatio || app.canvas.height !== height * window.devicePixelRatio) {
+            console.log('Pixi Resize:', width, height, 'Overlay:', overlay.clientWidth, overlay.clientHeight);
+            app.renderer.resize(width, height);
+            app.canvas.style.width = `${width}px`;
+            app.canvas.style.height = `${height}px`;
+            app.canvas.style.position = 'absolute';
+            app.canvas.style.top = '0';
+            app.canvas.style.left = '0';
         }
 
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
+        // Clear Graphics
+        graphics.clear();
         
-        ctx.resetTransform();
-        ctx.scale(dpr, dpr);
-        ctx.clearRect(0, 0, width, height);
+        // Manage Text Reuse
+        const existingTexts = textContainer.children as Text[];
+        let textIndex = 0;
+
+        const getText = (content: string, style: any) => {
+            let text = existingTexts[textIndex];
+            if (text) {
+                text.text = content;
+                text.style = style;
+                text.visible = true;
+            } else {
+                text = new Text({ text: content, style });
+                textContainer.addChild(text);
+            }
+            textIndex++;
+            return text;
+        };
 
         // Find visible time range by sampling pixels
         const timeScale = chart.timeScale();
@@ -293,7 +225,6 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
         const widthPx = width; // logical width
         
         // Sample start time
-        // Note: coordinateToTime returns null if not in data/not ready
         const startTime = timeScale.coordinateToTime(0) as number | null;
         
         if (startTime === null) return;
@@ -338,7 +269,6 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
         const pEnd = Math.ceil(pMax / PRICE_GRID_STEP) * PRICE_GRID_STEP;
 
         // Draw Rects
-        // Calculate initial x1
         let x1: number | null = timeScale.timeToCoordinate(t as UTCTimestamp);
         
         // If initial x1 is null (maybe slightly off screen), project from startTime
@@ -347,7 +277,6 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
              x1 = xStart + (timeDiff / TIME_GRID_STEP) * gridWidth;
         }
         
-        // Safety check
         if (x1 === null) x1 = 0;
 
         let safety = 0;
@@ -355,23 +284,139 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
             const nextT = t + TIME_GRID_STEP;
             let x2: number | null = timeScale.timeToCoordinate(nextT as UTCTimestamp);
             
-            // If x2 is null, project it using gridWidth
             if (x2 === null) {
                 x2 = x1 + gridWidth;
             }
             
-            // Draw grid column (visuals)
-            drawGridColumn(ctx, series, t, pStart, pEnd, x1, x2, lastTime, lastPrice, betsMap);
-            
+            // Draw Column
+            if (x2 > x1) {
+                const w = x2 - x1;
+                
+                // Determine Time Status
+                let isPast = false;
+                let isLocked = false;
+                
+                if (lastTime !== null) {
+                    if (t < lastTime) {
+                        isPast = true;
+                    } else if (t <= lastTime + 10) {
+                        isLocked = true;
+                    }
+                }
+
+                // Default Styles
+                let defaultFillColor = 0x000000;
+                let defaultFillAlpha = 0;
+                let defaultStrokeColor = 0x00FF00;
+                let defaultStrokeAlpha = 0.3;
+                const defaultTextColor = '#ffffff'; // White text
+                let defaultTextAlpha = 0.6;
+
+                if (isPast) {
+                    defaultFillColor = 0x808080;
+                    defaultFillAlpha = 0.05;
+                    defaultStrokeColor = 0x808080;
+                    defaultStrokeAlpha = 0.1;
+                    defaultTextAlpha = 0.1;
+                } else if (isLocked) {
+                    defaultFillColor = 0x3C3C3C;
+                    defaultFillAlpha = 0.5;
+                    defaultStrokeColor = 0x3C3C3C;
+                    defaultStrokeAlpha = 0.8;
+                    defaultTextAlpha = 0.2;
+                }
+
+                for (let p = pStart; p <= pEnd; p += PRICE_GRID_STEP) {
+                    const y1 = series.priceToCoordinate(p);
+                    const y2 = series.priceToCoordinate(p + PRICE_GRID_STEP);
+                    
+                    if (y1 === null || y2 === null) continue;
+                    
+                    const rY = Math.min(y1, y2);
+                    const rH = Math.abs(y1 - y2);
+                    
+                    // Generate unique ID for this grid cell
+                    const cellId = getGridId(t, p);
+                    const bet = betsMap.get(cellId);
+
+                    let fillColor = defaultFillColor;
+                    let fillAlpha = defaultFillAlpha;
+                    let strokeColor = defaultStrokeColor;
+                    let strokeAlpha = defaultStrokeAlpha;
+                    
+                    let textAlpha = defaultTextAlpha;
+                    let textColor = defaultTextColor;
+
+                    if (bet) {
+                         if (bet.status === 'won') {
+                             fillColor = 0x2ECC71; // Green
+                             fillAlpha = 0.3;
+                             strokeColor = 0x2ECC71;
+                             strokeAlpha = 1;
+                             // shadow equivalent?
+                         } else if (bet.status === 'lost') {
+                             fillColor = 0xE74C3C; // Red
+                             fillAlpha = 0.3;
+                             strokeColor = 0xE74C3C;
+                             strokeAlpha = 0.8;
+                         } else {
+                             // Pending: Gold
+                             fillColor = 0xFFD700;
+                             fillAlpha = 0.2;
+                             strokeColor = 0xFFD700;
+                             strokeAlpha = 0.8;
+                         }
+                         textAlpha = 1; // Highlight text
+                         textColor = '#ffffff';
+                    }
+
+                    // Draw Rect
+                    graphics.rect(x1 + 1, rY + 1, w - 2, rH - 2);
+                    graphics.fill({ color: fillColor, alpha: fillAlpha });
+                    graphics.stroke({ color: strokeColor, alpha: strokeAlpha, width: 1 });
+
+                    // Option Pricing
+                    const midPrice = p + PRICE_GRID_STEP / 2;
+                    const maturitySec = lastTime !== null ? (t + TIME_GRID_STEP) - lastTime : TIME_GRID_STEP;
+                    const T = Math.max(maturitySec, 0) / (365 * 24 * 3600);
+                    
+                    const S = lastPrice !== null ? lastPrice : midPrice;
+                    const K = midPrice;
+                    
+                    const optionPrice = K < S 
+                        ? bsCallPrice(S, K, RISK_FREE_RATE, VOLATILITY, T)
+                        : bsPutPrice(S, K, RISK_FREE_RATE, VOLATILITY, T);
+
+                    const textStyle = new TextStyle({
+                        fontFamily: 'sans-serif',
+                        fontSize: 10,
+                        fill: textColor,
+                        align: 'center',
+                    });
+
+                    const textObj = getText(optionPrice.toFixed(4), textStyle);
+                    textObj.alpha = textAlpha;
+                    textObj.anchor.set(0.5);
+                    textObj.x = x1 + w / 2;
+                    textObj.y = rY + rH / 2;
+                }
+            }
+
             // Prepare for next iteration
             t = nextT;
             x1 = x2;
         }
-    }, [chart, series, lastTime, lastPrice, bets]);
+        
+        // Hide unused text objects
+        for (let i = textIndex; i < existingTexts.length; i++) {
+            existingTexts[i].visible = false;
+        }
+
+    }, [chart, series, lastTime, lastPrice, bets, pixiReady]);
 
     useEffect(() => {
         drawGrid();
-    }, [drawGrid]);
+    }, [drawGrid, renderTrigger]); // Add renderTrigger
 
     useEffect(() => {
         const handleTimeScaleChange = () => {
@@ -399,76 +444,11 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
         };
     }, [chart, socket]);
 
-    // Helper to render a box
-    const renderBox = (x1: number, y1: number, x2: number, y2: number, style: React.CSSProperties) => {
-        const left = Math.min(x1, x2);
-        const top = Math.min(y1, y2);
-        const width = Math.abs(x2 - x1);
-        const height = Math.abs(y2 - y1);
-
-        return (
-            <div style={{
-                position: 'absolute',
-                left,
-                top,
-                width,
-                height,
-                pointerEvents: 'none',
-                ...style
-            }} />
-        );
-    };
-
     return (
         <div 
             ref={overlayRef}
             className="game-overlay"
-        >
-            <canvas 
-                ref={canvasRef}
-                style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: 0 }}
-            />
-
-            {/* Active Bets - Removed as they are now rendered in Canvas */}
-            {/* 
-            {bets.map(bet => {
-                const x1 = chart.timeScale().timeToCoordinate(bet.startTime as Time);
-                const x2 = chart.timeScale().timeToCoordinate(bet.endTime as Time);
-                const y1 = series.priceToCoordinate(bet.highPrice);
-                const y2 = series.priceToCoordinate(bet.lowPrice);
-
-                // Skip if coordinates are null (out of view or invalid)
-                if (x1 === null || x2 === null || y1 === null || y2 === null) return null;
-
-                let style: React.CSSProperties = {
-                    backgroundColor: 'rgba(255, 215, 0, 0.2)', // Pending: Gold
-                    border: '1px solid rgba(255, 215, 0, 0.8)',
-                    boxShadow: '0 0 5px rgba(255, 215, 0, 0.2)',
-                    zIndex: 10 // Ensure on top of canvas
-                };
-
-                if (bet.status === 'won') {
-                    style = {
-                        backgroundColor: 'rgba(46, 204, 113, 0.3)', // Won: Green
-                        border: '2px solid rgba(46, 204, 113, 1)',
-                        boxShadow: '0 0 10px rgba(46, 204, 113, 0.4)',
-                        zIndex: 11 // Bring to front
-                    };
-                } else if (bet.status === 'lost') {
-                    style = {
-                        backgroundColor: 'rgba(231, 76, 60, 0.3)', // Lost: Red
-                        border: '1px solid rgba(231, 76, 60, 0.8)',
-                        zIndex: 10
-                    };
-                }
-
-                return (
-                    <React.Fragment key={bet.id}>
-                        {renderBox(x1, y1, x2, y2, style)}
-                    </React.Fragment>
-                );
-            })}
-            */}
-        </div>
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+        />
     );
 };
