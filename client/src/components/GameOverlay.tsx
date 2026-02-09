@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import type { IChartApi, ISeriesApi, MouseEventParams } from 'lightweight-charts';
 import { Socket } from 'socket.io-client';
 import type { Bet as BetBox } from '@trader-master/shared';
 import { GridCanvas } from './GridCanvas';
 import { TIME_GRID_STEP, PRICE_GRID_STEP, getGridId } from '../utils/grid';
+import { useGameStore } from '../store/useGameStore';
 
 interface GameOverlayProps {
     chart: IChartApi;
@@ -14,8 +15,17 @@ interface GameOverlayProps {
 }
 
 export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket, lastTime, lastPrice }) => {
-    const [bets, setBets] = useState<BetBox[]>([]);
+    const bets = useGameStore((state) => state.bets);
+    const addBet = useGameStore((state) => state.addBet);
+    const updateBet = useGameStore((state) => state.updateBet);
+    const setBalance = useGameStore((state) => state.setBalance);
+    const balance = useGameStore((state) => state.balance);
     
+    // Initialize user balance
+    useEffect(() => {
+        setBalance(50000);
+    }, [setBalance]);
+
     // Use ref to access latest lastTime in event listener without re-binding
     const lastTimeRef = useRef(lastTime);
     useEffect(() => {
@@ -57,7 +67,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
                             }
                             
                             // Estimate t
-                            t = (refTime as number) + (logical - refLogical) * interval;
+                            t = (refTime as number) + (logical - refLogical) * interval; 
                         }
                     }
                 }
@@ -106,18 +116,18 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
 
     useEffect(() => {
         socket.on('bet_placed', (bet: BetBox) => {
-            setBets(prev => [...prev, bet]);
+            addBet(bet);
         });
         
         socket.on('bet_update', (updatedBet: BetBox) => {
-             setBets(prev => prev.map(b => b.id === updatedBet.id ? updatedBet : b));
+             updateBet(updatedBet);
         });
 
         return () => {
             socket.off('bet_placed');
             socket.off('bet_update');
         };
-    }, [socket]);
+    }, [socket, addBet, updateBet]);
 
     return (
         <div 

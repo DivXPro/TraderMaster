@@ -4,6 +4,7 @@ import type { IChartApi, ISeriesApi, UTCTimestamp, CandlestickData, LineData } f
 import io from 'socket.io-client';
 import type { Candle } from '@trader-master/shared';
 import { GameOverlay } from './components/GameOverlay';
+import { useGameStore } from './store/useGameStore';
 import './components/GameOverlay.css';
 import './App.css';
 
@@ -15,6 +16,14 @@ function App() {
   const [seriesApi, setSeriesApi] = useState<ISeriesApi<"Candlestick"> | ISeriesApi<"Line"> | null>(null);
   const [chartMode, setChartMode] = useState<'line' | 'candlestick'>('line');
   const [marketData, setMarketData] = useState<Candle[]>([]);
+
+  const bets = useGameStore((state) => state.bets);
+  const balance = useGameStore((state) => state.balance);
+
+  // Calculate stats
+  const totalBets = bets.length;
+  const wonBets = bets.filter(b => b.status === 'won').length;
+  const lostBets = bets.filter(b => b.status === 'lost').length;
 
   // Initialize Chart
   useEffect(() => {
@@ -251,6 +260,29 @@ function App() {
           </div>
         </div>
       </header>
+      
+      {/* Stats Container */}
+      <div className="stats-container">
+        <div className="balance-info">
+          <span className="label">Balance</span>
+          <span className="value">${balance.toLocaleString()}</span>
+        </div>
+        <div className="game-stats">
+          <div className="stat-item">
+            <span className="label">Bets</span>
+            <span className="value">{totalBets}</span>
+          </div>
+          <div className="stat-item">
+            <span className="label">Won</span>
+            <span className="value win">{wonBets}</span>
+          </div>
+          <div className="stat-item">
+            <span className="label">Lost</span>
+            <span className="value loss">{lostBets}</span>
+          </div>
+        </div>
+      </div>
+
       <div className="chart-wrapper" ref={chartContainerRef}>
         {chartApi && seriesApi && (
           <GameOverlay 

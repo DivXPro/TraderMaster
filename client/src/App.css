@@ -79,6 +79,66 @@ header h1 {
   color: #fff;
 }
 
+/* Stats Container */
+.stats-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #333;
+  padding: 10px 20px;
+  border-radius: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.balance-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.balance-info .label {
+  font-size: 0.8em;
+  color: #888;
+}
+
+.balance-info .value {
+  font-size: 1.5em;
+  font-weight: bold;
+  color: #fff;
+  font-family: monospace;
+}
+
+.game-stats {
+  display: flex;
+  gap: 20px;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.stat-item .label {
+  font-size: 0.8em;
+  color: #888;
+}
+
+.stat-item .value {
+  font-size: 1.2em;
+  font-weight: bold;
+  color: #fff;
+}
+
+.stat-item .value.win {
+  color: #2ecc71;
+}
+
+.stat-item .value.loss {
+  color: #e74c3c;
+}
+
 .chart-wrapper {
   width: 100%;
   height: 500px;
