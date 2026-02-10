@@ -6,7 +6,6 @@ import cors from 'cors';
 import { MarketRoom } from './rooms/MarketRoom';
 
 const port = Number(process.env.PORT || 3000);
-// const app = express();
 
 const server = defineServer({
     devMode: true,
@@ -56,13 +55,6 @@ const server = defineServer({
             } catch (e: any) {
                 res.status(e.code || 500).json({ code: e.code, message: e.message });
             }
-        });
-
-        app.use((req, res) => {
-            // Ignore /monitor requests as they are handled by the monitor middleware
-            if (req.url.startsWith('/monitor')) return;
-            console.log('Express caught request:', req.url);
-            res.status(404).send('Express 404');
         });
     },
     rooms: {
