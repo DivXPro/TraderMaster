@@ -8,5 +8,8 @@
   },
   "devDependencies": {
     "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@colyseus/schema": "^4.0.11"
   }
 }

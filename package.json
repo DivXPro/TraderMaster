@@ -9,7 +9,7 @@
   "scripts": {
     "dev:client": "pnpm --filter client dev",
     "dev:server": "pnpm --filter server dev",
-    "dev": "pnpm --filter client dev & pnpm --filter server dev",
+    "dev": "pnpm --filter server dev & pnpm --filter client dev",
     "build": "pnpm -r build",
     "start": "pnpm --filter server start"
   }

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
-import type { Bet as BetBox } from '@trader-master/shared';
+import type { BetData as BetBox } from '@trader-master/shared';
 import { Application, Graphics, Text, TextStyle, Container } from 'pixi.js';
 import { bsCallPrice, bsPutPrice, RISK_FREE_RATE, VOLATILITY } from '../utils/pricing';
 import { TIME_GRID_STEP, PRICE_GRID_STEP, getGridId } from '../utils/grid';

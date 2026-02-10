@@ -1,106 +1,78 @@
 import express from 'express';
-import http from 'http';
-import { Server } from 'socket.io';
+import { matchMaker, defineServer, defineRoom } from 'colyseus';
+import { monitor } from '@colyseus/monitor';
+import { playground } from "@colyseus/playground";
 import cors from 'cors';
-import { Market } from './market';
-import { Bet as SharedBet } from '@trader-master/shared';
+import { MarketRoom } from './rooms/MarketRoom';
 
-const app = express();
-app.use(cors());
+const port = Number(process.env.PORT || 3000);
+// const app = express();
 
-const server = http.createServer(app);
-const io = new Server(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
+const server = defineServer({
+    devMode: true,
+    express: (app) => {
+        //
+        // Include express middlewares (e.g. JSON body parser)
+        //
+        app.use(cors());
+        app.use(express.json({ limit: "100kb" }));
+        app.use('/monitor', monitor());
+        app.use('/playground', playground());
+
+        app.post('/matchmake/joinOrCreate/:roomName', async (req, res) => {
+            try {
+                console.log(`[MatchMaker] joinOrCreate request for ${req.params.roomName}`);
+                const seat = await matchMaker.joinOrCreate(req.params.roomName, req.body || {});
+                console.log(`[MatchMaker] seat reserved:`, JSON.stringify(seat));
+                res.json(seat);
+            } catch (e: any) {
+                console.error(`[MatchMaker] error:`, e);
+                res.status(e.code || 500).json({ code: e.code, message: e.message });
+            }
+        });
+
+        app.post('/matchmake/join/:roomName', async (req, res) => {
+            try {
+                const seat = await matchMaker.join(req.params.roomName, req.body || {});
+                res.json(seat);
+            } catch (e: any) {
+                res.status(e.code || 500).json({ code: e.code, message: e.message });
+            }
+        });
+
+        app.post('/matchmake/joinById/:roomId', async (req, res) => {
+            try {
+                const seat = await matchMaker.joinById(req.params.roomId, req.body || {});
+                res.json(seat);
+            } catch (e: any) {
+                res.status(e.code || 500).json({ code: e.code, message: e.message });
+            }
+        });
+
+        app.post('/matchmake/create/:roomName', async (req, res) => {
+            try {
+                const seat = await matchMaker.create(req.params.roomName, req.body || {});
+                res.json(seat);
+            } catch (e: any) {
+                res.status(e.code || 500).json({ code: e.code, message: e.message });
+            }
+        });
+
+        app.use((req, res) => {
+            // Ignore /monitor requests as they are handled by the monitor middleware
+            if (req.url.startsWith('/monitor')) return;
+            console.log('Express caught request:', req.url);
+            res.status(404).send('Express 404');
+        });
+    },
+    rooms: {
+        market: defineRoom(MarketRoom),
     }
 });
 
-const market = new Market(100.0);
 
-interface Bet extends SharedBet {
-    socketId: string;
-}
 
-let bets: Bet[] = [];
 
-io.on('connection', (socket) => {
-    console.log('A user connected:', socket.id);
-
-    // Send initial history
-    socket.emit('history', market.getHistory());
-
-    // Send existing bets to new user (so they can see others' bets? 
-    // For MVP let's send all active bets to everyone)
-    socket.emit('active_bets', bets);
-
-    socket.on('place_bet', (betData: Omit<Bet, 'id' | 'status' | 'socketId'>) => {
-        const newBet: Bet = {
-            ...betData,
-            id: Math.random().toString(36).substring(7),
-            status: 'pending',
-            socketId: socket.id
-        };
-        bets.push(newBet);
-        console.log(`New bet placed: ${newBet.id} by ${socket.id}`);
-        
-        // Broadcast to all clients
-        io.emit('bet_placed', newBet);
-    });
-
-    socket.on('disconnect', () => {
-        console.log('User disconnected:', socket.id);
-    });
-});
-
-// Market Tick Loop
-setInterval(() => {
-    const candle = market.tick();
-    io.emit('price', candle);
-
-    // Check Bets
-    const now = candle.time;
-    let betsChanged = false;
-
-    bets.forEach(bet => {
-        if (bet.status === 'pending') {
-            // Check if active (time is within range)
-            if (now >= bet.startTime && now <= bet.endTime) {
-                // Instant Win Rule: If K-line passes through (intersects) the box
-                // Check intersection of [candle.low, candle.high] and [bet.lowPrice, bet.highPrice]
-                const overlap = Math.max(candle.low, bet.lowPrice) <= Math.min(candle.high, bet.highPrice);
-                
-                if (overlap) {
-                    bet.status = 'won';
-                    io.emit('bet_update', bet);
-                    betsChanged = true;
-                    return; // Stop processing this bet
-                }
-            }
-
-            // Check if bet expired and still pending (meaning it didn't win)
-            if (now >= bet.endTime) {
-                bet.status = 'lost';
-                io.emit('bet_update', bet);
-                betsChanged = true;
-            }
-        }
-    });
-
-    // Clean up old bets (keep them for a while to show result)
-    if (betsChanged) {
-        // Optional: remove very old bets to free memory
-        const cutoff = now - 60; // Keep for 1 minute after result
-        const oldLen = bets.length;
-        bets = bets.filter(b => b.status === 'pending' || b.endTime > cutoff);
-        if (bets.length !== oldLen) {
-            // Maybe sync full list periodically?
-        }
-    }
-
-}, 1000); // 1 tick per second
-
-const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+server.listen(port).then(() => {
+    console.log(`Listening on ws://localhost:${port}`);
 });

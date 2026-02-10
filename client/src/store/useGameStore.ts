@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import type { Bet, Candle } from '@trader-master/shared';
+import type { BetData, Candle } from '@trader-master/shared';
 
 interface GameState {
   // Market Data
@@ -9,7 +9,7 @@ interface GameState {
   lastPrice: number | null;
   
   // Betting
-  bets: Bet[];
+  bets: BetData[];
   
   // User
   balance: number;
@@ -17,9 +17,9 @@ interface GameState {
   // Actions
   setMarketData: (data: Candle[]) => void;
   addCandle: (candle: Candle) => void;
-  setBets: (bets: Bet[]) => void;
-  addBet: (bet: Bet) => void;
-  updateBet: (bet: Bet) => void;
+  setBets: (bets: BetData[]) => void;
+  addBet: (bet: BetData) => void;
+  updateBet: (bet: BetData) => void;
   setBalance: (balance: number) => void;
 }
 

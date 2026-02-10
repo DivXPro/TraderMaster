@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import type { IChartApi, ISeriesApi, MouseEventParams } from 'lightweight-charts';
-import { Socket } from 'socket.io-client';
-import type { Bet as BetBox } from '@trader-master/shared';
+import * as Colyseus from '@colyseus/sdk';
+import type { BetData as BetBox, MarketState } from '@trader-master/shared';
 import { GridCanvas } from './GridCanvas';
 import { TIME_GRID_STEP, PRICE_GRID_STEP, getGridId } from '../utils/grid';
 import { useGameStore } from '../store/useGameStore';
@@ -9,12 +9,12 @@ import { useGameStore } from '../store/useGameStore';
 interface GameOverlayProps {
     chart: IChartApi;
     series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
-    socket: Socket;
+    room: Colyseus.Room<MarketState>;
     lastTime: number | null;
     lastPrice: number | null;
 }
 
-export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket, lastTime, lastPrice }) => {
+export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, lastTime, lastPrice }) => {
     const bets = useGameStore((state) => state.bets);
     const addBet = useGameStore((state) => state.addBet);
     const updateBet = useGameStore((state) => state.updateBet);
@@ -102,7 +102,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
                  };
                  console.log('Placing bet:', bet);
                  // Emit event to server
-                 socket.emit('place_bet', bet);
+                 room.send('place_bet', bet);
             } else {
                 console.log('Click ignored: Locked or Past');
             }
@@ -112,22 +112,55 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, socket,
         return () => {
             chart.unsubscribeClick(handleChartClick);
         };
-    }, [chart, series, socket]);
+    }, [chart, series, room]);
 
     useEffect(() => {
-        socket.on('bet_placed', (bet: BetBox) => {
-            addBet(bet);
-        });
+        if (!room) return;
+
+        // Note: Colyseus state synchronization
+        // Since we don't have the Schema classes on the client, we access generic state
+        // room.state.bets is a MapSchema
         
-        socket.on('bet_update', (updatedBet: BetBox) => {
-             updateBet(updatedBet);
+        // Helper to convert Schema to BetBox
+        const toBetBox = (bet: any): BetBox => ({
+            id: bet.id,
+            cellId: bet.cellId,
+            startTime: bet.startTime,
+            endTime: bet.endTime,
+            highPrice: bet.highPrice,
+            lowPrice: bet.lowPrice,
+            status: bet.status,
+            // Add other fields if necessary
         });
 
+        // When a new bet is added to the state
+        if (room.state.bets && typeof (room.state.bets as any).onAdd === 'function') {
+            (room.state.bets as any).onAdd((bet: any, key: string) => {
+                console.log("Bet added:", bet);
+                addBet(toBetBox(bet));
+
+                // Listen for changes on this specific bet
+                bet.onChange(() => {
+                    console.log("Bet changed:", bet);
+                    updateBet(toBetBox(bet));
+                });
+            });
+            
+            // Handle existing bets if any (though onAdd is called for initial state too usually)
+            room.state.bets.forEach((bet: any) => {
+                 addBet(toBetBox(bet));
+                 bet.onChange(() => {
+                    updateBet(toBetBox(bet));
+                 });
+            });
+        } else {
+            console.warn("room.state.bets is not a MapSchema or onAdd is missing", room.state.bets);
+        }
+
         return () => {
-            socket.off('bet_placed');
-            socket.off('bet_update');
+             // Cleanup if needed
         };
-    }, [socket, addBet, updateBet]);
+    }, [room, addBet, updateBet]);
 
     return (
         <div 

@@ -14,12 +14,16 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@colyseus/monitor": "^0.17.7",
+    "@colyseus/schema": "^4.0.11",
+    "@colyseus/ws-transport": "^0.17.9",
+    "@trader-master/shared": "workspace:*",
+    "colyseus": "^0.17.8",
     "cors": "^2.8.6",
-    "express": "^5.2.1",
-    "socket.io": "^4.8.3",
-    "@trader-master/shared": "workspace:*"
+    "express": "^5.2.1"
   },
   "devDependencies": {
+    "@colyseus/playground": "^0.17.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^25.2.0",

@@ -6,7 +6,7 @@ export interface Candle {
   close: number;
 }
 
-export interface Bet {
+export interface BetData {
     id: string;
     cellId?: string; // Unique ID for the grid cell
     startTime: number;
@@ -15,3 +15,5 @@ export interface Bet {
     lowPrice: number;
     status: 'pending' | 'won' | 'lost';
 }
+
+export * from './schema/MarketState';
