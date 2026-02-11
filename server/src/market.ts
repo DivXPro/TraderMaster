@@ -50,4 +50,12 @@ export class Market {
     public getHistory(): Candle[] {
         return this.history;
     }
+
+    public getCurrentPrice(): number {
+        return this.currentPrice;
+    }
+
+    public getCurrentTime(): number {
+        return this.currentTime;
+    }
 }

@@ -56,7 +56,7 @@ function App() {
           room.leave();
       }
     };
-  }, []);
+  }, [room]);
 
   // Initialize Chart
   useEffect(() => {

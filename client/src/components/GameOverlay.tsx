@@ -1,9 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import type { IChartApi, ISeriesApi, MouseEventParams } from 'lightweight-charts';
 import * as Colyseus from '@colyseus/sdk';
-import type { BetData as BetBox, MarketState } from '@trader-master/shared';
+import type { BetData as BetBox, MarketState, PredictionCellData } from '@trader-master/shared';
 import { GridCanvas } from './GridCanvas';
-import { TIME_GRID_STEP, PRICE_GRID_STEP, getGridId } from '../utils/grid';
 import { useGameStore } from '../store/useGameStore';
 
 interface GameOverlayProps {
@@ -16,8 +15,11 @@ interface GameOverlayProps {
 
 export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, lastTime, lastPrice }) => {
     const bets = useGameStore((state) => state.bets);
+    const predictionCells = useGameStore((state) => state.predictionCells);
     const addBet = useGameStore((state) => state.addBet);
     const updateBet = useGameStore((state) => state.updateBet);
+    const addPredictionCell = useGameStore((state) => state.addPredictionCell);
+    const removePredictionCell = useGameStore((state) => state.removePredictionCell);
     const setBalance = useGameStore((state) => state.setBalance);
     const balance = useGameStore((state) => state.balance);
     
@@ -79,32 +81,31 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
 
             if (t === null || p === null) return;
             
-            // Align to grid
-            const tStep = Math.floor((t as number) / TIME_GRID_STEP) * TIME_GRID_STEP;
-            const pStep = Math.floor(p / PRICE_GRID_STEP) * PRICE_GRID_STEP;
+            // Find clicked Prediction Cell
+            // Access latest predictionCells from store directly to ensure freshness in callback if needed,
+            // but here we rely on the closure or ref if we want perfect safety.
+            // Since we are inside useEffect with [predictionCells] dependency (missing in original code?), 
+            // actually the original code had [chart, series, room] dependencies.
+            // We should use the store getter to avoid re-binding the listener too often.
+            const currentCells = useGameStore.getState().predictionCells;
             
-            // Check validation (Must be future > 10s)
-            const currentLastTime = lastTimeRef.current;
-            console.log('Click Grid:', tStep, pStep, 'LastTime:', currentLastTime);
+            const clickedCell = currentCells.find(c => 
+                t! >= c.startTime && t! <= c.endTime && 
+                p >= c.lowPrice && p <= c.highPrice
+            );
 
-            if (currentLastTime === null) return;
-            
-            if (tStep > currentLastTime + 10) {
+            if (clickedCell) {
                  // Place Bet
                  const bet = {
-                     cellId: getGridId(tStep, pStep),
-                     startTime: tStep,
-                     endTime: tStep + TIME_GRID_STEP,
-                     highPrice: pStep + PRICE_GRID_STEP,
-                     lowPrice: pStep,
+                     cellId: clickedCell.id,
                      amount: 100, // Default amount
                      currency: 'USD'
                  };
-                 console.log('Placing bet:', bet);
+                 console.log('Placing bet on cell:', clickedCell.id, bet);
                  // Emit event to server
                  room.send('place_bet', bet);
             } else {
-                console.log('Click ignored: Locked or Past');
+                console.log('Click ignored: No prediction cell found at', t, p);
             }
         };
         
@@ -112,7 +113,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
         return () => {
             chart.unsubscribeClick(handleChartClick);
         };
-    }, [chart, series, room]);
+    }, [chart, series, room]); // Dependencies
 
     useEffect(() => {
         if (!room) return;
@@ -129,48 +130,75 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
             endTime: bet.endTime,
             highPrice: bet.highPrice,
             lowPrice: bet.lowPrice,
+            amount: bet.amount,
+            odds: bet.odds,
+            payout: bet.payout,
             status: bet.status,
-            // Add other fields if necessary
+            ownerId: bet.ownerId
         });
 
-        // When a new bet is added to the state
+        // Helper to convert Schema to PredictionCell
+        const toPredictionCell = (cell: any): PredictionCellData => ({
+            id: cell.id,
+            startTime: cell.startTime,
+            endTime: cell.endTime,
+            highPrice: cell.highPrice,
+            lowPrice: cell.lowPrice,
+            probability: cell.probability,
+            odds: cell.odds
+        });
+
+        // Bets Sync
         if (room.state.bets && typeof (room.state.bets as any).onAdd === 'function') {
             (room.state.bets as any).onAdd((bet: any, key: string) => {
-                console.log("Bet added:", bet);
                 addBet(toBetBox(bet));
-
-                // Listen for changes on this specific bet
                 bet.onChange(() => {
-                    console.log("Bet changed:", bet);
                     updateBet(toBetBox(bet));
                 });
             });
             
-            // Handle existing bets if any (though onAdd is called for initial state too usually)
             room.state.bets.forEach((bet: any) => {
                  addBet(toBetBox(bet));
                  bet.onChange(() => {
                     updateBet(toBetBox(bet));
                  });
             });
-        } else {
-            console.warn("room.state.bets is not a MapSchema or onAdd is missing", room.state.bets);
+        }
+
+        // Prediction Cells Sync
+        if (room.state.predictionCells && typeof (room.state.predictionCells as any).onAdd === 'function') {
+            (room.state.predictionCells as any).onAdd((cell: any, key: string) => {
+                console.log('Client received new PredictionCell:', cell.toJSON());
+                addPredictionCell(toPredictionCell(cell));
+            });
+
+            (room.state.predictionCells as any).onRemove((cell: any, key: string) => {
+                console.log('Client removed PredictionCell:', cell.id);
+                removePredictionCell(cell.id);
+            });
+            
+            room.state.predictionCells.forEach((cell: any) => {
+                 console.log('Client initial PredictionCell:', cell.toJSON());
+                 addPredictionCell(toPredictionCell(cell));
+            });
         }
 
         return () => {
              // Cleanup if needed
         };
-    }, [room, addBet, updateBet]);
+    }, [room, addBet, updateBet, addPredictionCell, removePredictionCell]);
 
     return (
         <div 
             className="game-overlay-container"
-            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
+            style={{ position: 'absolute', top:0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
         >
             <GridCanvas 
                 chart={chart}
                 series={series}
                 bets={bets}
+                predictionCells={predictionCells}
+                balance={balance}
                 lastTime={lastTime}
                 lastPrice={lastPrice}
             />

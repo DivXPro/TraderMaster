@@ -8,12 +8,26 @@ export interface Candle {
 
 export interface BetData {
     id: string;
-    cellId?: string; // Unique ID for the grid cell
+    cellId: string;
     startTime: number;
     endTime: number;
     highPrice: number;
     lowPrice: number;
-    status: 'pending' | 'won' | 'lost';
+    amount: number;
+    odds: number;
+    payout: number;
+    status: string;
+    ownerId: string;
+}
+
+export interface PredictionCellData {
+    id: string;
+    startTime: number;
+    endTime: number;
+    highPrice: number;
+    lowPrice: number;
+    probability: number;
+    odds: number;
 }
 
 export * from './schema/MarketState';
