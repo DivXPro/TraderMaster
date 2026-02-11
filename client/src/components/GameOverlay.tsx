@@ -1,7 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import type { IChartApi, ISeriesApi, MouseEventParams } from 'lightweight-charts';
 import * as Colyseus from '@colyseus/sdk';
-import type { BetData as BetBox, MarketState, PredictionCellData } from '@trader-master/shared';
+import type { CollectionCallback, SchemaCallback } from '@colyseus/schema';
+import type { BetData as BetBox, PredictionCellData } from '@trader-master/shared';
+import { MarketState, Bet, PredictionCell } from '@trader-master/shared';
 import { GridCanvas } from './GridCanvas';
 import { useGameStore } from '../store/useGameStore';
 
@@ -22,7 +24,8 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
     const removePredictionCell = useGameStore((state) => state.removePredictionCell);
     const setBalance = useGameStore((state) => state.setBalance);
     const balance = useGameStore((state) => state.balance);
-    
+    const callbacks = Colyseus.Callbacks.get(room);
+
     // Initialize user balance
     useEffect(() => {
         setBalance(50000);
@@ -123,7 +126,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
         // room.state.bets is a MapSchema
         
         // Helper to convert Schema to BetBox
-        const toBetBox = (bet: any): BetBox => ({
+        const toBetBox = (bet: Bet): BetBox => ({
             id: bet.id,
             cellId: bet.cellId,
             startTime: bet.startTime,
@@ -138,7 +141,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
         });
 
         // Helper to convert Schema to PredictionCell
-        const toPredictionCell = (cell: any): PredictionCellData => ({
+        const toPredictionCell = (cell: PredictionCell): PredictionCellData => ({
             id: cell.id,
             startTime: cell.startTime,
             endTime: cell.endTime,
@@ -149,37 +152,36 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
         });
 
         // Bets Sync
-        if (room.state.bets && typeof (room.state.bets as any).onAdd === 'function') {
-            (room.state.bets as any).onAdd((bet: any, key: string) => {
-                addBet(toBetBox(bet));
-                bet.onChange(() => {
-                    updateBet(toBetBox(bet));
-                });
+        callbacks.onAdd('bets', (bet: Bet, key: string) => {
+            addBet(toBetBox(bet));
+            (bet as unknown as SchemaCallback<Bet>).onChange(() => {
+                updateBet(toBetBox(bet));
             });
-            
-            room.state.bets.forEach((bet: any) => {
-                 addBet(toBetBox(bet));
-                 bet.onChange(() => {
-                    updateBet(toBetBox(bet));
-                 });
+        });
+    
+        if (room.state.bets) {
+            room.state.bets.forEach((bet: Bet) => {
+                addBet(toBetBox(bet));
+                (bet as unknown as SchemaCallback<Bet>).onChange(() => {
+                updateBet(toBetBox(bet));
+                });
             });
         }
 
-        // Prediction Cells Sync
-        if (room.state.predictionCells && typeof (room.state.predictionCells as any).onAdd === 'function') {
-            (room.state.predictionCells as any).onAdd((cell: any, key: string) => {
-                console.log('Client received new PredictionCell:', cell.toJSON());
-                addPredictionCell(toPredictionCell(cell));
-            });
 
-            (room.state.predictionCells as any).onRemove((cell: any, key: string) => {
-                console.log('Client removed PredictionCell:', cell.id);
-                removePredictionCell(cell.id);
-            });
-            
-            room.state.predictionCells.forEach((cell: any) => {
-                 console.log('Client initial PredictionCell:', cell.toJSON());
-                 addPredictionCell(toPredictionCell(cell));
+        // Prediction Cells Sync
+        callbacks.onAdd('predictionCells', (cell: PredictionCell, key: string) => {
+            console.log('Client received new PredictionCell:', cell.toJSON());
+            addPredictionCell(toPredictionCell(cell));
+        });
+
+        callbacks.onRemove('predictionCells', (cell: PredictionCell, key: string) => {
+            removePredictionCell(cell.id);
+        });
+
+        if (room.state.predictionCells) {
+            room.state.predictionCells.forEach((cell: PredictionCell) => {
+                addPredictionCell(toPredictionCell(cell));
             });
         }
 
