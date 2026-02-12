@@ -144,7 +144,53 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
             if (bet.cellId) betsMap.set(bet.cellId, bet);
         });
 
-        console.log('GridCanvas: predictionCells count:', predictionCells.length, predictionCells);
+        // Calculate reference parameters for time projection
+        let refTime: number | null = null;
+        let refLogical: number | null = null;
+        let avgInterval = 1; // Default 1s
+        
+        const logicalRange = timeScale.getVisibleLogicalRange();
+        if (logicalRange) {
+            // Find two points to estimate interval and establish reference
+            // We search for valid data points within the visible range (or slightly before/after)
+            // We prefer points that are integers (likely bar centers)
+            
+            let p1: { time: number, logical: number } | null = null;
+            let p2: { time: number, logical: number } | null = null;
+
+            // Scan a few points to find valid times
+            // Start from the "current" end of data if possible, or just scan visible range
+            const startScan = Math.floor(logicalRange.from);
+            const endScan = Math.ceil(logicalRange.to);
+            
+            for (let i = startScan; i <= endScan; i++) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const coord = timeScale.logicalToCoordinate(i as any);
+                if (coord !== null) {
+                    const t = timeScale.coordinateToTime(coord);
+                    if (typeof t === 'number') {
+                        if (!p1) {
+                            p1 = { time: t, logical: i };
+                        } else if (i > p1.logical + 2) { // Ensure some distance
+                            p2 = { time: t, logical: i };
+                            break; // Found two points
+                        }
+                    }
+                }
+            }
+
+            if (p1) {
+                refTime = p1.time;
+                refLogical = p1.logical;
+                
+                if (p2) {
+                    avgInterval = (p2.time - p1.time) / (p2.logical - p1.logical);
+                }
+            }
+        }
+        
+        // Debug
+        // console.log('Ref:', refTime, refLogical, 'Interval:', avgInterval);
 
         predictionCells.forEach(cell => {
             let x1 = timeScale.timeToCoordinate(cell.startTime as UTCTimestamp);
@@ -152,50 +198,20 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
             const y1 = series.priceToCoordinate(cell.highPrice);
             const y2 = series.priceToCoordinate(cell.lowPrice);
 
-            // Debug logs
-            // console.log(`Cell ${cell.id}: t1=${cell.startTime} t2=${cell.endTime} x1=${x1} x2=${x2}`);
+            // Project x1 if null (future)
+            if (x1 === null && refTime !== null && refLogical !== null) {
+                const diffSec = (cell.startTime as number) - refTime;
+                const targetLogical = refLogical + (diffSec / avgInterval);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                x1 = timeScale.logicalToCoordinate(targetLogical as any);
+            }
 
-            // Logic to handle future time coordinates
-            if (x1 === null || x2 === null) {
-                // We need to project coordinates for future times
-                // 1. Get the last known time and its coordinate/logical index
-                const logicalRange = timeScale.getVisibleLogicalRange();
-                if (!logicalRange) return;
-
-                // We assume the chart has data and we can find the "current" head
-                // However, getting the exact logical index for a specific future time is tricky without knowing the exact interval
-                // Let's try to infer interval from visible range or passed props
-                
-                // Simplified approach: find two points to calculate pxPerSec
-                const visibleFrom = logicalRange.from;
-                const visibleTo = logicalRange.to;
-                
-                const timeFrom = timeScale.coordinateToTime(timeScale.logicalToCoordinate(visibleFrom) || 0);
-                const timeTo = timeScale.coordinateToTime(timeScale.logicalToCoordinate(visibleTo) || 0);
-                
-                if (typeof timeFrom === 'number' && typeof timeTo === 'number' && timeTo > timeFrom) {
-                    const pxFrom = timeScale.logicalToCoordinate(visibleFrom) || 0;
-                    const pxTo = timeScale.logicalToCoordinate(visibleTo) || 0;
-                    
-                    const totalTime = timeTo - timeFrom;
-                    const totalPx = pxTo - pxFrom;
-                    
-                    if (totalTime > 0) {
-                         const pxPerSec = totalPx / totalTime;
-                         
-                         // Project x1 if null
-                         if (x1 === null) {
-                             const diffSec = (cell.startTime as number) - timeFrom;
-                             x1 = (pxFrom + diffSec * pxPerSec) as Coordinate;
-                         }
-                         
-                         // Project x2 if null
-                         if (x2 === null) {
-                             const diffSec = (cell.endTime as number) - timeFrom;
-                             x2 = (pxFrom + diffSec * pxPerSec) as Coordinate;
-                         }
-                    }
-                }
+            // Project x2 if null (future)
+            if (x2 === null && refTime !== null && refLogical !== null) {
+                const diffSec = (cell.endTime as number) - refTime;
+                const targetLogical = refLogical + (diffSec / avgInterval);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                x2 = timeScale.logicalToCoordinate(targetLogical as any);
             }
 
             if (x1 === null || x2 === null || y1 === null || y2 === null) return;

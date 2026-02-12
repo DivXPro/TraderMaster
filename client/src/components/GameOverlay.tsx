@@ -188,7 +188,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
         return () => {
              // Cleanup if needed
         };
-    }, [room, addBet, updateBet, addPredictionCell, removePredictionCell]);
+    }, [room, addBet, updateBet, addPredictionCell, removePredictionCell, callbacks]);
 
     return (
         <div 

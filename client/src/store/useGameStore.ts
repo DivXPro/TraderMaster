@@ -59,7 +59,10 @@ export const useGameStore = create<GameState>()(
 
     setBets: (bets) => set({ bets }),
 
-    addBet: (bet) => set((state) => ({ bets: [...state.bets, bet] })),
+    addBet: (bet) => set((state) => {
+        if (state.bets.some(b => b.id === bet.id)) return {};
+        return { bets: [...state.bets, bet] };
+    }),
 
     updateBet: (updatedBet) => set((state) => ({
       bets: state.bets.map((b) => (b.id === updatedBet.id ? updatedBet : b)),
@@ -67,7 +70,10 @@ export const useGameStore = create<GameState>()(
 
     setPredictionCells: (cells) => set({ predictionCells: cells }),
     
-    addPredictionCell: (cell) => set((state) => ({ predictionCells: [...state.predictionCells, cell] })),
+    addPredictionCell: (cell) => set((state) => {
+        if (state.predictionCells.some(c => c.id === cell.id)) return {};
+        return { predictionCells: [...state.predictionCells, cell] };
+    }),
     
     removePredictionCell: (cellId) => set((state) => ({ 
         predictionCells: state.predictionCells.filter(c => c.id !== cellId) 

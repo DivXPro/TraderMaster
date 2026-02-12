@@ -56,7 +56,7 @@ function App() {
           room.leave();
       }
     };
-  }, [room]);
+  }, []); // Run once on mount
 
   // Initialize Chart
   useEffect(() => {
