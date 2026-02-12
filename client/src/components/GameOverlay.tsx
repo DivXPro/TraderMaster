@@ -171,7 +171,6 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
 
         // Prediction Cells Sync
         callbacks.onAdd('predictionCells', (cell: PredictionCell, key: string) => {
-            console.log('Client received new PredictionCell:', cell.toJSON());
             addPredictionCell(toPredictionCell(cell));
         });
 

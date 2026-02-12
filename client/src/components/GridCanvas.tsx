@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import type { IChartApi, ISeriesApi, UTCTimestamp, Coordinate } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import type { BetData as BetBox, PredictionCellData } from '@trader-master/shared';
 import { Application, Graphics, Text, TextStyle, Container } from 'pixi.js';
 import { bsCallPrice, bsPutPrice, RISK_FREE_RATE, VOLATILITY } from '../utils/pricing';
@@ -71,7 +71,7 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
     }, []);
 
     // Grid Drawing Logic
-    const drawGrid = React.useCallback(() => {
+    const drawCellGrid = React.useCallback(() => {
         if (!pixiReady || !appRef.current || !gridGraphicsRef.current || !textContainerRef.current) return;
         
         const app = appRef.current;
@@ -95,10 +95,24 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
 
         if (width <= 0 || height <= 0) return;
 
-        // Resize Pixi app if needed
-        if (app.canvas.width !== width * window.devicePixelRatio || app.canvas.height !== height * window.devicePixelRatio) {
-            console.log('Pixi Resize:', width, height, 'Overlay:', overlay.clientWidth, overlay.clientHeight);
-            app.renderer.resize(width, height);
+        // Handle Retina/High DPI Screens
+        // const dpr = window.devicePixelRatio || 1;
+        const dpr = 1
+        // Force resolution to 1 because we will manually scale the canvas size and coordinates
+        if (app.renderer.resolution !== 1) {
+            app.renderer.resolution = 1;
+        }
+
+        // Resize Pixi app to physical pixels
+        // app.canvas.width/height will match these values
+        const targetPhysicalWidth = width;
+        const targetPhysicalHeight = height;
+
+        if (app.canvas.width !== targetPhysicalWidth || app.canvas.height !== targetPhysicalHeight) {
+            console.log('Pixi Resize (Physical):', targetPhysicalWidth, targetPhysicalHeight, 'DPR:', dpr);
+            app.renderer.resize(targetPhysicalWidth, targetPhysicalHeight);
+            
+            // Explicitly set style dimensions to match CSS pixels (logical size)
             app.canvas.style.width = `${width}px`;
             app.canvas.style.height = `${height}px`;
             app.canvas.style.position = 'absolute';
@@ -189,10 +203,7 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
             }
         }
         
-        // Debug
-        // console.log('Ref:', refTime, refLogical, 'Interval:', avgInterval);
-
-        predictionCells.forEach(cell => {
+        const drawCell = (cell: PredictionCellData) => {
             let x1 = timeScale.timeToCoordinate(cell.startTime as UTCTimestamp);
             let x2 = timeScale.timeToCoordinate(cell.endTime as UTCTimestamp);
             const y1 = series.priceToCoordinate(cell.highPrice);
@@ -219,9 +230,15 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
             // Skip if completely off-screen
             if (x2 < 0 || x1 > width) return;
 
-            const w = x2 - x1;
-            const h = Math.abs(y2 - y1);
-            const rY = Math.min(y1, y2);
+            // Manual High-DPI Scaling: Scale all logical coordinates to physical pixels
+            const x1_px = x1 * dpr;
+            const x2_px = x2 * dpr;
+            const y1_px = y1 * dpr;
+            const y2_px = y2 * dpr;
+
+            const w_px = x2_px - x1_px;
+            const h_px = Math.abs(y2_px - y1_px);
+            const rY_px = Math.min(y1_px, y2_px);
 
             // Determine Time Status
             let isPast = false;
@@ -289,10 +306,11 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
                     textColor = '#ffffff';
             }
 
-            // Draw Rect
-            graphics.rect(x1 + 1, rY + 1, w - 2, h - 2);
+            // Draw Rect (using physical pixels)
+            graphics.rect(x1_px + 1 * dpr, rY_px + 1 * dpr, w_px - 2 * dpr, h_px - 2 * dpr);
             graphics.fill({ color: fillColor, alpha: fillAlpha });
-            graphics.stroke({ color: strokeColor, alpha: strokeAlpha, width: 1 });
+            // Stroke width scaled by dpr
+            graphics.stroke({ color: strokeColor, alpha: strokeAlpha, width: 1 * dpr });
 
             // Option Pricing or Probability Display
             // Use cell.probability if available, otherwise calculate option price (fallback or for reference)
@@ -318,7 +336,7 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
 
             const textStyle = new TextStyle({
                 fontFamily: 'sans-serif',
-                fontSize: 10,
+                fontSize: 10 * dpr, // Scale font size
                 fill: textColor,
                 align: 'center',
             });
@@ -326,9 +344,11 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
             const textObj = getText(displayText, textStyle);
             textObj.alpha = textAlpha;
             textObj.anchor.set(0.5);
-            textObj.x = x1 + w / 2;
-            textObj.y = rY + h / 2;
-        });
+            textObj.x = x1_px + w_px / 2;
+            textObj.y = rY_px + h_px / 2;
+        };
+
+        predictionCells.forEach(drawCell);
         
         // Hide unused text objects
         for (let i = textIndex; i < existingTexts.length; i++) {
@@ -338,8 +358,8 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
     }, [pixiReady, chart, bets, predictionCells, series, lastTime, lastPrice]);
 
     useEffect(() => {
-        drawGrid();
-    }, [drawGrid, renderTrigger]); // Add renderTrigger
+        drawCellGrid();
+    }, [drawCellGrid, renderTrigger]); // Add renderTrigger
 
     useEffect(() => {
         const handleTimeScaleChange = () => {

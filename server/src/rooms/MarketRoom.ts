@@ -150,21 +150,21 @@ export class MarketRoom extends Room {
         const basePrice = Math.floor(currentPrice / PREDICTION_PRICE_HEIGHT) * PREDICTION_PRICE_HEIGHT;
 
         // Up cells: Start from basePrice upwards (includes the cell containing currentPrice)
-        for (let i = 0; i < PREDICTION_LAYERS; i++) {
+        for (let i = 1; i <= PREDICTION_LAYERS; i++) {
             const low = basePrice + (i * PREDICTION_PRICE_HEIGHT);
             const high = low + PREDICTION_PRICE_HEIGHT;
-            this.createPredictionCell(low, high, endTime, timeToMaturity);
+            this.createPredictionCell(low, high, currentTime, endTime, timeToMaturity);
         }
 
         // Down cells: Start from basePrice downwards
         for (let i = 0; i < PREDICTION_LAYERS; i++) {
             const high = basePrice - (i * PREDICTION_PRICE_HEIGHT);
             const low = high - PREDICTION_PRICE_HEIGHT;
-            this.createPredictionCell(low, high, endTime, timeToMaturity);
+            this.createPredictionCell(low, high, currentTime, endTime, timeToMaturity);
         }
     }
 
-    private createPredictionCell(low: number, high: number, endTime: number, T: number) {
+    private createPredictionCell(low: number, high: number, startTime: number, endTime: number, T: number) {
         const currentPrice = this.market.getCurrentPrice();
         const probability = BlackScholes.calculateProbability(currentPrice, low, high, T);
         const odds = BlackScholes.calculateOdds(probability);
@@ -172,7 +172,7 @@ export class MarketRoom extends Room {
         // Always create cells to ensure grid is full, even if odds are extreme
         const cell = new PredictionCell();
         cell.id = Math.random().toString(36).substring(7);
-        cell.startTime = this.market.getCurrentTime();
+        cell.startTime = startTime;
         cell.endTime = endTime;
         cell.lowPrice = low;
         cell.highPrice = high;

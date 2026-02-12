@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, UTCTimestamp, CandlestickData, LineData } from 'lightweight-charts';
 import * as Colyseus from '@colyseus/sdk';
-import { MarketState, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT } from '@trader-master/shared';
+import { MarketState, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_LAYERS, PREDICTION_INITIAL_COLUMNS } from '@trader-master/shared';
 import type { Candle } from '@trader-master/shared';
 import { GameOverlay } from './components/GameOverlay';
 import { useGameStore } from './store/useGameStore';
@@ -81,11 +81,11 @@ function App() {
         // Calculation: 
         // Chart Height (500) - TimeScale (~26) = ~474px
         // Vertical Content: 474 * 0.8 (margins) = ~379px
-        // Target Blocks Vertical: 6
-        // Block Height: 379 / 6 ≈ 63.2px
+        // Target Blocks Vertical: PREDICTION_LAYERS * 2
+        // Block Height: 379 / (PREDICTION_LAYERS * 2)
         // Block Width (Time): PREDICTION_DURATION (30s)
-        // BarSpacing: 63.2 / 30 ≈ 2.1 px
-        barSpacing: ((500 - 26) * 0.8 / 6) / PREDICTION_DURATION, 
+        // BarSpacing: Block Height / PREDICTION_DURATION
+        barSpacing: ((500 - 26) * 0.8 / (PREDICTION_LAYERS * 2)) / PREDICTION_DURATION, 
         // Default right offset (empty space on the right in bars)
         // We calculate this dynamically below, but set a safe default
         rightOffset: 0, 
@@ -103,14 +103,14 @@ function App() {
       },
     });
     
-    // Custom Autoscale strategy to ensure we see exactly ~6 grid blocks vertically
+    // Custom Autoscale strategy to ensure we see exactly ~PREDICTION_LAYERS * 2 grid blocks vertically
     // This fixes the vertical scale so that 1 block (PREDICTION_PRICE_HEIGHT price units) has a constant height in pixels.
     // Combined with the fixed barSpacing, this ensures the grid is square.
     const autoscaleStrategy = (original: () => any) => {
         const res = original();
         if (res === null) return null;
 
-        const TARGET_VISUAL_RANGE = 6 * PREDICTION_PRICE_HEIGHT; // 6 blocks
+        const TARGET_VISUAL_RANGE = (PREDICTION_LAYERS * 2) * PREDICTION_PRICE_HEIGHT; // blocks
         
         // Calculate center of the current data
         const center = (res.priceRange.minValue + res.priceRange.maxValue) / 2;
@@ -149,12 +149,23 @@ function App() {
     
     // Initial centering logic
     const width = chartContainerRef.current.clientWidth;
-    const centerOffset = (width / 2) / (((500 - 26) * 0.8 / 6) / PREDICTION_DURATION);
+    // Calculate how many seconds fit in half width
+    // barSpacing is pixels per second (since we divided by PREDICTION_DURATION in calculation, wait...)
+    // No, barSpacing is pixels per bar. If 1 bar = 1 second.
+    // PREDICTION_DURATION is 30.
+    // Our barSpacing calculation was: height_per_block / 30.
+    // So barSpacing is pixels per second IF 1 bar = 1 second.
+    // Assuming 1 bar = 1 second for now as per server update frequency.
+    
+    // Center offset: shift current time to the left/center to leave room for future
+    // We want right side to accommodate PREDICTION_INITIAL_COLUMNS * PREDICTION_DURATION
+    // rightOffset is in bars.
+    const desiredRightOffsetBars = PREDICTION_INITIAL_COLUMNS * PREDICTION_DURATION;
     
     // Apply options to set the right offset
     chart.applyOptions({
         timeScale: {
-            rightOffset: centerOffset,
+            rightOffset: desiredRightOffsetBars,
         }
     });
 
@@ -183,11 +194,11 @@ function App() {
         const newWidth = chartContainerRef.current.clientWidth;
         chart.applyOptions({ width: newWidth });
         
-        // Update center offset on resize
-        const newCenterOffset = (newWidth / 2) / (((500 - 26) * 0.8 / 6) / PREDICTION_DURATION);
+        // Keep the right offset consistent on resize
+        const desiredRightOffsetBars = PREDICTION_INITIAL_COLUMNS * PREDICTION_DURATION;
         chart.applyOptions({
             timeScale: {
-                rightOffset: newCenterOffset,
+                rightOffset: desiredRightOffsetBars,
             }
         });
       }
