@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, UTCTimestamp, CandlestickData, LineData } from 'lightweight-charts';
 import * as Colyseus from '@colyseus/sdk';
-import { MarketState } from '@trader-master/shared';
+import { MarketState, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT } from '@trader-master/shared';
 import type { Candle } from '@trader-master/shared';
 import { GameOverlay } from './components/GameOverlay';
 import { useGameStore } from './store/useGameStore';
@@ -80,12 +80,12 @@ function App() {
         // Adjust barSpacing to make grid blocks square
         // Calculation: 
         // Chart Height (500) - TimeScale (~26) = ~474px
-        // Vertical Content: 474 * 0.8 (margins) = ~380px
-        // Target Blocks Vertical: 8
-        // Block Height: 380 / 8 = 47.5px
-        // Block Width (Time): 60 seconds (60 bars)
-        // BarSpacing: 47.5 / 60 ≈ 0.79 px
-        barSpacing: 0.79, 
+        // Vertical Content: 474 * 0.8 (margins) = ~379px
+        // Target Blocks Vertical: 6
+        // Block Height: 379 / 6 ≈ 63.2px
+        // Block Width (Time): PREDICTION_DURATION (30s)
+        // BarSpacing: 63.2 / 30 ≈ 2.1 px
+        barSpacing: ((500 - 26) * 0.8 / 6) / PREDICTION_DURATION, 
         // Default right offset (empty space on the right in bars)
         // We calculate this dynamically below, but set a safe default
         rightOffset: 0, 
@@ -103,14 +103,14 @@ function App() {
       },
     });
     
-    // Custom Autoscale strategy to ensure we see exactly ~8 grid blocks vertically
-    // This fixes the vertical scale so that 1 block (0.5 price units) has a constant height in pixels.
+    // Custom Autoscale strategy to ensure we see exactly ~6 grid blocks vertically
+    // This fixes the vertical scale so that 1 block (PREDICTION_PRICE_HEIGHT price units) has a constant height in pixels.
     // Combined with the fixed barSpacing, this ensures the grid is square.
     const autoscaleStrategy = (original: () => any) => {
         const res = original();
         if (res === null) return null;
 
-        const TARGET_VISUAL_RANGE = 4.0; // 8 blocks * 0.5
+        const TARGET_VISUAL_RANGE = 6 * PREDICTION_PRICE_HEIGHT; // 6 blocks
         
         // Calculate center of the current data
         const center = (res.priceRange.minValue + res.priceRange.maxValue) / 2;
@@ -149,7 +149,7 @@ function App() {
     
     // Initial centering logic
     const width = chartContainerRef.current.clientWidth;
-    const centerOffset = (width / 2) / 0.79;
+    const centerOffset = (width / 2) / (((500 - 26) * 0.8 / 6) / PREDICTION_DURATION);
     
     // Apply options to set the right offset
     chart.applyOptions({
@@ -184,7 +184,7 @@ function App() {
         chart.applyOptions({ width: newWidth });
         
         // Update center offset on resize
-        const newCenterOffset = (newWidth / 2) / 0.79;
+        const newCenterOffset = (newWidth / 2) / (((500 - 26) * 0.8 / 6) / PREDICTION_DURATION);
         chart.applyOptions({
             timeScale: {
                 rightOffset: newCenterOffset,

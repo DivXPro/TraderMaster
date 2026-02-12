@@ -1,5 +1,5 @@
 import { Room, Client } from "colyseus";
-import { MarketState, Bet, PredictionCell } from "@trader-master/shared";
+import { MarketState, Bet, PredictionCell, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_GENERATION_INTERVAL, PREDICTION_LAYERS, PREDICTION_INITIAL_COLUMNS } from "@trader-master/shared";
 import { Market } from "../market";
 import { BlackScholes } from "../utils/bs";
 
@@ -51,6 +51,20 @@ export class MarketRoom extends Room {
 
         // 1 second tick
         this.setSimulationInterval((deltaTime) => this.update(deltaTime), 1000);
+
+        // Initial Generation: Cover the right side of the chart (future)
+        // Generate a few columns ahead so the grid looks full immediately
+        const now = this.market.getCurrentTime();
+        const currentPrice = this.market.getCurrentPrice();
+        
+        for (let i = 0; i < PREDICTION_INITIAL_COLUMNS; i++) {
+            // Generate cells for: now, now+30, now+60, ...
+            this.generatePredictionCells(currentPrice, now + i * PREDICTION_GENERATION_INTERVAL);
+        }
+
+        // Fast-forward lastGenerationTime so we don't regenerate these immediately in update()
+        // The next generation will happen when candle.time >= (now + (N-1)*30) + 30
+        this.lastGenerationTime = now + (PREDICTION_INITIAL_COLUMNS - 1) * PREDICTION_GENERATION_INTERVAL;
     }
 
     onJoin(client: Client) {
@@ -70,8 +84,8 @@ export class MarketRoom extends Room {
         this.broadcast("price", candle);
         this.state.currentPrice = candle.close;
 
-        // Generate Prediction Cells (Every 5 seconds)
-        if (candle.time - this.lastGenerationTime >= 5) {
+        // Generate Prediction Cells (Every PREDICTION_GENERATION_INTERVAL seconds)
+        if (candle.time - this.lastGenerationTime >= PREDICTION_GENERATION_INTERVAL) {
             this.generatePredictionCells(candle.close, candle.time);
             this.lastGenerationTime = candle.time;
         }
@@ -125,33 +139,29 @@ export class MarketRoom extends Room {
     }
 
     private generatePredictionCells(currentPrice: number, currentTime: number) {
-        // Generate cells for different durations: 30s, 60s, 120s
-        const durations = [30, 60, 120];
-        // Generate cells for different price ranges: +/- 0.5%, +/- 1.0%
-        const ranges = [0.005, 0.01];
+        // Generate standardized cells
+        const endTime = currentTime + PREDICTION_DURATION;
+        const timeToMaturity = PREDICTION_DURATION / 31536000; // in years
+        
+        // Front-end visual range is about 6 units height.
+        // We generate PREDICTION_LAYERS layers up and PREDICTION_LAYERS layers down to fully cover the visible area.
 
-        durations.forEach(duration => {
-            const timeToMaturity = duration / 31536000; // in years
-            const endTime = currentTime + duration;
+        // Align generation to grid to ensure consistent vertical positioning
+        const basePrice = Math.floor(currentPrice / PREDICTION_PRICE_HEIGHT) * PREDICTION_PRICE_HEIGHT;
 
-            ranges.forEach(range => {
-                // Up cell: [Current, Current * (1+range)]
-                this.createPredictionCell(
-                    currentPrice, 
-                    currentPrice * (1 + range), 
-                    endTime, 
-                    timeToMaturity
-                );
+        // Up cells: Start from basePrice upwards (includes the cell containing currentPrice)
+        for (let i = 0; i < PREDICTION_LAYERS; i++) {
+            const low = basePrice + (i * PREDICTION_PRICE_HEIGHT);
+            const high = low + PREDICTION_PRICE_HEIGHT;
+            this.createPredictionCell(low, high, endTime, timeToMaturity);
+        }
 
-                // Down cell: [Current * (1-range), Current]
-                this.createPredictionCell(
-                    currentPrice * (1 - range), 
-                    currentPrice, 
-                    endTime, 
-                    timeToMaturity
-                );
-            });
-        });
+        // Down cells: Start from basePrice downwards
+        for (let i = 0; i < PREDICTION_LAYERS; i++) {
+            const high = basePrice - (i * PREDICTION_PRICE_HEIGHT);
+            const low = high - PREDICTION_PRICE_HEIGHT;
+            this.createPredictionCell(low, high, endTime, timeToMaturity);
+        }
     }
 
     private createPredictionCell(low: number, high: number, endTime: number, T: number) {
@@ -159,18 +169,16 @@ export class MarketRoom extends Room {
         const probability = BlackScholes.calculateProbability(currentPrice, low, high, T);
         const odds = BlackScholes.calculateOdds(probability);
 
-        // Only create attractive cells
-        if (odds > 1.01 && odds < 20) {
-            const cell = new PredictionCell();
-            cell.id = Math.random().toString(36).substring(7);
-            cell.startTime = this.market.getCurrentTime();
-            cell.endTime = endTime;
-            cell.lowPrice = low;
-            cell.highPrice = high;
-            cell.probability = probability;
-            cell.odds = odds;
-            
-            this.state.predictionCells.set(cell.id, cell);
-        }
+        // Always create cells to ensure grid is full, even if odds are extreme
+        const cell = new PredictionCell();
+        cell.id = Math.random().toString(36).substring(7);
+        cell.startTime = this.market.getCurrentTime();
+        cell.endTime = endTime;
+        cell.lowPrice = low;
+        cell.highPrice = high;
+        cell.probability = probability;
+        cell.odds = odds;
+        
+        this.state.predictionCells.set(cell.id, cell);
     }
 }
