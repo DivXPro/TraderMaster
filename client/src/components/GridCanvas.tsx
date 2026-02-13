@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import type { BetData as BetBox, PredictionCellData } from '@trader-master/shared';
-import { Application, Graphics, Text, TextStyle, Container } from 'pixi.js';
+import { Application, Graphics, Text, TextStyle, Container, FederatedPointerEvent, Rectangle } from 'pixi.js';
 import { bsCallPrice, bsPutPrice, RISK_FREE_RATE, VOLATILITY } from '../utils/pricing';
 
 interface GridCanvasProps {
@@ -9,12 +9,12 @@ interface GridCanvasProps {
     series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
     bets: BetBox[];
     predictionCells: PredictionCellData[];
-    balance: number;
     lastTime: number | null;
     lastPrice: number | null;
+    onCellClick?: (cellId: string) => void;
 }
 
-export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, predictionCells, balance, lastTime, lastPrice }) => {
+export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, predictionCells, lastTime, lastPrice, onCellClick }) => {
     const overlayRef = useRef<HTMLDivElement>(null);
     const appRef = useRef<Application | null>(null);
     const gridGraphicsRef = useRef<Graphics | null>(null);
@@ -48,6 +48,11 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
             
             // Create Graphics for Grid
             const graphics = new Graphics();
+            
+            // Enable interaction
+            graphics.eventMode = 'static';
+            graphics.cursor = 'pointer';
+            
             app.stage.addChild(graphics);
             gridGraphicsRef.current = graphics;
 
@@ -123,6 +128,55 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
         // Clear Graphics
         graphics.clear();
         
+        // Hit Area for full coverage
+        graphics.hitArea = new Rectangle(0, 0, width, height);
+
+        // Click Handler
+        graphics.removeAllListeners(); // Clean up old listeners
+        graphics.on('pointerdown', (e: FederatedPointerEvent) => {
+             if (onCellClick) {
+                 const localPoint = graphics.toLocal(e.global);
+                 const timeScale = chart.timeScale();
+                 
+                 // Try standard conversion first
+                 let t = timeScale.coordinateToTime(localPoint.x) as number | null;
+                 
+                 // Future time estimation if needed
+                 if (t === null) {
+                     const logical = timeScale.coordinateToLogical(localPoint.x);
+                     const logicalRange = timeScale.getVisibleLogicalRange();
+                     
+                     if (logical !== null && logicalRange) {
+                         // Estimate interval using visible range
+                         const startLogical = Math.floor(logicalRange.from);
+                         const endLogical = Math.ceil(logicalRange.to);
+                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                         const t1 = timeScale.coordinateToTime(timeScale.logicalToCoordinate(startLogical as any)!) as number;
+                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                         const t2 = timeScale.coordinateToTime(timeScale.logicalToCoordinate(endLogical as any)!) as number;
+                         
+                         if (t1 && t2 && endLogical > startLogical) {
+                             const interval = (t2 - t1) / (endLogical - startLogical);
+                             t = t1 + (logical - startLogical) * interval;
+                         }
+                     }
+                 }
+
+                 const p = series.coordinateToPrice(localPoint.y);
+                 
+                 if (t !== null && p !== null) {
+                     const clickedCell = predictionCells.find(c => 
+                        t! >= c.startTime && t! <= c.endTime && 
+                        p >= c.lowPrice && p <= c.highPrice
+                     );
+                     
+                     if (clickedCell) {
+                         onCellClick(clickedCell.id);
+                     }
+                 }
+             }
+        });
+
         // Manage Text Reuse
         const existingTexts = textContainer.children as Text[];
         let textIndex = 0;

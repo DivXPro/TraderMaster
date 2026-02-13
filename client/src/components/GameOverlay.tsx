@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useMemo } from 'react';
-import type { IChartApi, ISeriesApi, MouseEventParams } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 import * as Colyseus from '@colyseus/sdk';
 import type { BetData as BetBox, PredictionCellData } from '@trader-master/shared';
 import { MarketState, Bet, PredictionCell, Player, MessageType } from '@trader-master/shared';
-import type { CollectionCallback, SchemaCallback } from '@colyseus/schema';
 import { GridCanvas } from './GridCanvas';
 import { useGameStore } from '../store/useGameStore';
 
@@ -24,7 +23,6 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
     const addPredictionCell = useGameStore((state) => state.addPredictionCell);
     const removePredictionCell = useGameStore((state) => state.removePredictionCell);
     const setBalance = useGameStore((state) => state.setBalance);
-    const balance = useGameStore((state) => state.balance);
 
     // Use ref to access latest lastTime in event listener without re-binding
     const lastTimeRef = useRef(lastTime);
@@ -33,102 +31,45 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
     }, [lastTime]);
 
     // Handle Chart Clicks for Betting
-    useEffect(() => {
-        const handleChartClick = (param: MouseEventParams) => {
-            if (!param.point || !chart || !series) return;
-            
-            const timeScale = chart.timeScale();
-            // Cast to number | null to handle both Time type and our calculated number
-            let t = timeScale.coordinateToTime(param.point.x) as number | null;
-            
-            // If t is null (future area), estimate it using logical index
-            if (t === null) {
-                const logical = timeScale.coordinateToLogical(param.point.x);
-                if (logical !== null) {
-                    const visibleRange = timeScale.getVisibleLogicalRange();
-                    if (visibleRange) {
-                        // Use the start of visible range as reference (usually has data)
-                        const refLogical = Math.ceil(visibleRange.from);
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        const refCoordinate = timeScale.logicalToCoordinate(refLogical as any);
-                        const refTime = refCoordinate !== null ? timeScale.coordinateToTime(refCoordinate) : null;
-                        
-                        if (refTime !== null) {
-                            // Calculate interval (seconds per logical index)
-                            // Sample another point to estimate interval
-                            const refLogical2 = refLogical + 5; // Take a point 5 steps away
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            const refCoordinate2 = timeScale.logicalToCoordinate(refLogical2 as any);
-                            const refTime2 = refCoordinate2 !== null ? timeScale.coordinateToTime(refCoordinate2) : null;
-                            
-                            let interval = 1; // Default to 1s if calculation fails
-                            if (refTime2 !== null && typeof refTime === 'number' && typeof refTime2 === 'number') {
-                                interval = (refTime2 - refTime) / 5;
-                            }
-                            
-                            // Estimate t
-                            t = (refTime as number) + (logical - refLogical) * interval; 
-                        }
-                    }
-                }
-            }
+    const handleCellClick = (cellId: string) => {
+         const currentCells = useGameStore.getState().predictionCells;
+         const clickedCell = currentCells.find(c => c.id === cellId);
 
-            const p = series.coordinateToPrice(param.point.y);
-            
-            console.log('Click raw:', param.point, 't:', t, 'p:', p);
+         if (!clickedCell) return;
 
-            if (t === null || p === null) return;
-            
-            // Find clicked Prediction Cell
-            // Access latest predictionCells from store directly to ensure freshness in callback if needed,
-            // but here we rely on the closure or ref if we want perfect safety.
-            // Since we are inside useEffect with [predictionCells] dependency (missing in original code?), 
-            // actually the original code had [chart, series, room] dependencies.
-            // We should use the store getter to avoid re-binding the listener too often.
-            const currentCells = useGameStore.getState().predictionCells;
-            
-            const clickedCell = currentCells.find(c => 
-                t! >= c.startTime && t! <= c.endTime && 
-                p >= c.lowPrice && p <= c.highPrice
-            );
+         const currentBets = useGameStore.getState().bets;
+         const existingBet = currentBets.find(b => b.cellId === clickedCell.id && b.ownerId === room.sessionId);
 
-            if (clickedCell) {
-                 const currentBets = useGameStore.getState().bets;
-                 const existingBet = currentBets.find(b => b.cellId === clickedCell.id && b.ownerId === room.sessionId);
+         if (existingBet) {
+             alert("You have already placed a bet on this cell!");
+             return;
+         }
 
-                 if (existingBet) {
-                     alert("You have already placed a bet on this cell!");
-                     return;
-                 }
+         // Check balance
+         const currentBalance = useGameStore.getState().balance;
+         const betAmount = 100;
+         
+         if (currentBalance < betAmount) {
+             alert("Insufficient balance!");
+             return;
+         }
 
-                 // Check balance
-                 const currentBalance = useGameStore.getState().balance;
-                 const betAmount = 100;
-                 
-                 if (currentBalance < betAmount) {
-                     alert("Insufficient balance!");
-                     return;
-                 }
-
-                 // Place Bet
-                 const bet = {
-                     cellId: clickedCell.id,
-                     amount: betAmount, // Default amount
-                     currency: 'USD'
-                 };
-                 console.log('Placing bet on cell:', clickedCell.id, bet);
-                 // Emit event to server
-                 room.send(MessageType.PLACE_BET, bet);
-            } else {
-                console.log('Click ignored: No prediction cell found at', t, p);
-            }
-        };
+         // Place Bet
+         const bet = {
+             cellId: clickedCell.id,
+             amount: betAmount, // Default amount
+             currency: 'USD'
+         };
+         console.log('Placing bet on cell:', clickedCell.id, bet);
+         // Emit event to server
+         room.send(MessageType.PLACE_BET, bet);
+    };
         
-        chart.subscribeClick(handleChartClick);
-        return () => {
-            chart.unsubscribeClick(handleChartClick);
-        };
-    }, [chart, series, room]); // Dependencies
+        // chart.subscribeClick(handleChartClick);
+        // return () => {
+        //    chart.unsubscribeClick(handleChartClick);
+        // };
+    // }, [chart, series, room]); // Dependencies
 
     useEffect(() => {
         if (!room) return;
@@ -175,14 +116,8 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
                     setBalance(player.balance);
                 });
 
-                //  // 2. Sync Bets
-                //  // Initial Bets Load
-                //  player.bets.forEach((bet: Bet) => {
-                //      addBet(toBetBox(bet));
-                //  });
-
-                 // Listen for new bets
-                 // Cast to unknown then CollectionCallback to access onAdd
+                // Listen for bets
+                // Cast to unknown then CollectionCallback to access onAdd
                 callbacks.listen(player, 'bets', (currentBets, previousBets) => {
                     console.debug('currentBets', currentBets);
                     console.debug('previousBets', previousBets);
@@ -238,9 +173,9 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
                 series={series}
                 bets={bets}
                 predictionCells={predictionCells}
-                balance={balance}
                 lastTime={lastTime}
                 lastPrice={lastPrice}
+                onCellClick={handleCellClick}
             />
         </div>
     );
