@@ -1,7 +1,7 @@
 
 export class BlackScholes {
-    private static r: number = 0.05; // Risk-free rate
-    private static sigma: number = 0.3; // Volatility
+    private static r: number = 0.0; // Risk-free rate (ignored for short-term game)
+    private static sigma: number = 1500; // Volatility (High volatility for fast-paced game logic)
 
     /**
      * Standard Normal Cumulative Distribution Function
@@ -19,6 +19,7 @@ export class BlackScholes {
 
     /**
      * Calculate probability that price will be between low and high at time T
+     * Uses Arithmetic Brownian Motion (Normal Distribution) for short-term/game logic
      * @param S Current Price
      * @param L Lower Bound
      * @param H Upper Bound
@@ -27,17 +28,18 @@ export class BlackScholes {
     static calculateProbability(S: number, L: number, H: number, T: number): number {
         if (T <= 0) return 0;
         
-        // mu = ln(S) + (r - 0.5 * sigma^2) * T
-        // std_dev = sigma * sqrt(T)
+        // Normal Distribution Model (Bachelier)
+        // Mean = S (assuming 0 drift for short term)
+        // StdDev = sigma * sqrt(T)
+        // Here sigma is treated as Absolute Volatility (price units per sqrt(year))
         
-        const mu = Math.log(S) + (this.r - 0.5 * this.sigma * this.sigma) * T;
         const std_dev = this.sigma * Math.sqrt(T);
-
-        const z_H = (Math.log(H) - mu) / std_dev;
-        const z_L = (Math.log(L) - mu) / std_dev;
+        
+        const z_H = (H - S) / std_dev;
+        const z_L = (L - S) / std_dev;
 
         const prob = this.cdf(z_H) - this.cdf(z_L);
-        return Math.max(0, prob); // Ensure non-negative
+        return Math.max(0, prob);
     }
 
     static calculateOdds(probability: number): number {

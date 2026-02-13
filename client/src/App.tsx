@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, UTCTimestamp, CandlestickData, LineData } from 'lightweight-charts';
 import * as Colyseus from '@colyseus/sdk';
-import { MarketState, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_INITIAL_COLUMNS } from '@trader-master/shared';
+import { MarketState, MessageType, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_INITIAL_COLUMNS } from '@trader-master/shared';
 import type { Candle } from '@trader-master/shared';
 import { GameOverlay } from './components/GameOverlay';
 import { useGameStore } from './store/useGameStore';
@@ -37,13 +37,30 @@ function App() {
     let active = true;
 
     const connect = async () => {
+      let r: Colyseus.Room<MarketState>;
       try {
-        const r = await client.joinOrCreate<MarketState>("market");
+        const lastToken = localStorage.getItem("reconnectionToken");
+        
+        if (lastToken) {
+            try {
+                console.log("Reconnecting with token...", lastToken);
+                r = await client.reconnect<MarketState>(lastToken);
+                console.log("Reconnected successfully!");
+            } catch (e) {
+                console.warn("Reconnection failed, joining new room:", e);
+                localStorage.removeItem("reconnectionToken");
+                r = await client.joinOrCreate<MarketState>("market");
+            }
+        } else {
+            r = await client.joinOrCreate<MarketState>("market");
+        }
+
         if (!active) {
             r.leave();
             return;
         }
-        console.log("Joined room successfully!");
+        console.log("Joined room successfully!", r.sessionId);
+        localStorage.setItem("reconnectionToken", r.reconnectionToken);
         setRoom(r);
       } catch (e) {
         console.error("Join error:", e);
@@ -288,8 +305,8 @@ function App() {
       }
     };
 
-    room.onMessage('history', handleHistory);
-    room.onMessage('price', handlePrice);
+    room.onMessage(MessageType.HISTORY, handleHistory);
+    room.onMessage(MessageType.PRICE, handlePrice);
 
     return () => {
         // Cleanup listeners if necessary, but room.leave() in parent effect might handle it.

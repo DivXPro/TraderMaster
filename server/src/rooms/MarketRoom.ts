@@ -1,5 +1,5 @@
 import { Room, Client } from "colyseus";
-import { MarketState, Bet, PredictionCell, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_GENERATION_INTERVAL, PREDICTION_LAYERS, PREDICTION_INITIAL_COLUMNS } from "@trader-master/shared";
+import { MarketState, Bet, PredictionCell, Player, MessageType, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_GENERATION_INTERVAL, PREDICTION_LAYERS, PREDICTION_INITIAL_COLUMNS } from "@trader-master/shared";
 import { Market } from "../market";
 import { BlackScholes } from "../utils/bs";
 
@@ -13,23 +13,43 @@ export class MarketRoom extends Room {
         this.state = new MarketState();
         this.market = new Market(100.0);
 
-        this.onMessage("place_bet", (client, data) => {
+        this.onMessage(MessageType.PLACE_BET, (client, data) => {
             const amount = Number(data.amount);
             // 3. Bet: Minimum amount limit
             if (!amount || amount < 10) {
-                 client.send("error", { message: "Minimum bet amount is 10" });
+                 client.send(MessageType.ERROR, { message: "Minimum bet amount is 10" });
                  return;
+            }
+
+            // Check balance
+            const player = this.state.players.get(client.sessionId);
+            if (!player || player.balance < amount) {
+                client.send(MessageType.ERROR, { message: "Insufficient balance" });
+                return;
             }
 
             // Find Prediction Cell
             const cell = this.state.predictionCells.get(data.cellId);
             if (!cell) {
-                client.send("error", { message: "Prediction cell not found or expired" });
+                client.send(MessageType.ERROR, { message: "Prediction cell not found or expired" });
                 return;
             }
 
-            // Validate if cell is still valid (e.g. not too close to expiration)
-            // But for now we trust the cell existence
+            // Check if player already placed a bet on this cell
+            let alreadyBet = false;
+            player.bets.forEach((b) => {
+                if (b.cellId === cell.id) {
+                    alreadyBet = true;
+                }
+            });
+
+            if (alreadyBet) {
+                client.send(MessageType.ERROR, { message: "You have already placed a bet on this cell" });
+                return;
+            }
+
+            // Deduct balance
+            player.balance -= amount;
 
             const bet = new Bet();
             bet.id = Math.random().toString(36).substring(7);
@@ -43,10 +63,10 @@ export class MarketRoom extends Room {
             bet.status = "pending";
             bet.ownerId = client.sessionId;
 
-            this.state.bets.set(bet.id, bet);
+            player.bets.set(bet.id, bet);
             console.log(`New bet placed: ${bet.id} by ${client.sessionId} Amount: ${amount} Odds: ${cell.odds}`);
             
-            client.send("bet_placed", { id: bet.id, odds: cell.odds });
+            client.send(MessageType.BET_PLACED, { id: bet.id, odds: cell.odds });
         });
 
         // 1 second tick
@@ -67,21 +87,63 @@ export class MarketRoom extends Room {
         this.lastGenerationTime = now + (PREDICTION_INITIAL_COLUMNS - 1) * PREDICTION_GENERATION_INTERVAL;
     }
 
-    onJoin(client: Client) {
+    onJoin(client: Client, options: any) {
         console.log("Client joined:", client.sessionId);
+        
+        // Check if player already exists (reconnection logic)
+        const existingPlayer = this.state.players.get(client.sessionId);
+        if (existingPlayer) {
+            existingPlayer.connected = true;
+            // Send initial history
+            client.send(MessageType.HISTORY, this.market.getHistory());
+            return;
+        }
+
+        // Create player state
+        const player = new Player();
+        player.id = client.sessionId;
+        player.balance = 10000; // Initial balance
+        player.connected = true;
+        this.state.players.set(client.sessionId, player);
+
         // Send initial history
-        client.send("history", this.market.getHistory());
+        client.send(MessageType.HISTORY, this.market.getHistory());
     }
 
-    onLeave(client: Client) {
-        console.log("Client left:", client.sessionId);
+    async onLeave(client: Client, code: number) {
+        console.log("Client left:", client.sessionId, "Code:", code);
+        const consented = code === 1000;
+        
+        const player = this.state.players.get(client.sessionId);
+        if (player) {
+             player.connected = false;
+        }
+
+        try {
+            if (consented) {
+                throw new Error("consented leave");
+            }
+
+            // Allow reconnection for 60 seconds
+            await this.allowReconnection(client, 60);
+
+            // Client returned!
+            if (player) {
+                player.connected = true;
+                console.log("Client reconnected:", client.sessionId);
+            }
+        } catch (e) {
+             // Timeout or consented leave
+             console.log("Client remove (timeout or consented):", client.sessionId);
+             this.state.players.delete(client.sessionId);
+        }
     }
 
     update(deltaTime: number) {
         const candle = this.market.tick();
         
         // Broadcast new candle
-        this.broadcast("price", candle);
+        this.broadcast(MessageType.PRICE, candle);
         this.state.currentPrice = candle.close;
 
         // Generate Prediction Cells (Every PREDICTION_GENERATION_INTERVAL seconds)
@@ -96,34 +158,64 @@ export class MarketRoom extends Room {
         const cellsToRemove: string[] = [];
 
         // Check Bets
-        this.state.bets.forEach((bet: Bet, key: string) => {
-            if (bet.status === "pending") {
-                // 4. Settlement: Check at time point
-                if (now >= bet.endTime) {
-                    // Check if market price is in prediction cell range
-                    const won = candle.close >= bet.lowPrice && candle.close <= bet.highPrice;
-                    
-                    if (won) {
-                        bet.status = "won";
-                        bet.payout = bet.amount * bet.odds;
-                        console.log(`Bet ${bet.id} WON! Payout: ${bet.payout}`);
-                    } else {
-                        bet.status = "lost";
-                        bet.payout = 0;
-                        console.log(`Bet ${bet.id} LOST`);
+        this.state.players.forEach((player) => {
+            const betsToRemove: string[] = [];
+            player.bets.forEach((bet: Bet, key: string) => {
+                if (bet.status === "pending") {
+                    // 4. Settlement: Check at time point
+                    if (now >= bet.endTime) {
+                        // Check if market price is in prediction cell range
+                        // Use [Low, High) for inclusive low, exclusive high to prevent double wins on boundary
+                        const won = candle.close >= bet.lowPrice && candle.close < bet.highPrice;
+                        
+                        if (won) {
+                            bet.status = "won";
+                            bet.payout = bet.amount * bet.odds;
+                            console.log(`Bet ${bet.id} WON! Payout: ${bet.payout}`);
+                            
+                            // Add payout to player balance
+                            player.balance += bet.payout;
+
+                            // Notify Client
+                            const client = this.clients.find(c => c.sessionId === bet.ownerId);
+                            if (client) {
+                                client.send(MessageType.BET_RESULT, { 
+                                    id: bet.id, 
+                                    status: "won", 
+                                    payout: bet.payout,
+                                    cellId: bet.cellId 
+                                });
+                            }
+
+                        } else {
+                            bet.status = "lost";
+                            bet.payout = 0;
+                            console.log(`Bet ${bet.id} LOST`);
+
+                            // Notify Client
+                            const client = this.clients.find(c => c.sessionId === bet.ownerId);
+                            if (client) {
+                                client.send(MessageType.BET_RESULT, { 
+                                    id: bet.id, 
+                                    status: "lost", 
+                                    payout: 0,
+                                    cellId: bet.cellId
+                                });
+                            }
+                        }
+                    }
+                } else {
+                    // Cleanup old bets after a while
+                    // Logic: if bet is finished and time > endTime + 60s
+                    if (now > bet.endTime + 60) {
+                        betsToRemove.push(key);
                     }
                 }
-            } else {
-                // Cleanup old bets after a while
-                // Logic: if bet is finished and time > endTime + 60s
-                if (now > bet.endTime + 60) {
-                    betsToRemove.push(key);
-                }
-            }
-        });
+            });
 
-        betsToRemove.forEach(key => {
-            this.state.bets.delete(key);
+            betsToRemove.forEach(key => {
+                player.bets.delete(key);
+            });
         });
 
         // Cleanup expired Prediction Cells

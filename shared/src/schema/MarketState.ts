@@ -24,8 +24,15 @@ export class PredictionCell extends Schema {
     @type("number") odds: number = 0;
 }
 
+export class Player extends Schema {
+    @type("string") id: string = "";
+    @type("number") balance: number = 0;
+    @type("boolean") connected: boolean = true;
+    @type({ map: Bet }) bets = new MapSchema<Bet>();
+}
+
 export class MarketState extends Schema {
     @type("number") currentPrice: number = 0;
-    @type({ map: Bet }) bets = new MapSchema<Bet>();
     @type({ map: PredictionCell }) predictionCells = new MapSchema<PredictionCell>();
+    @type({ map: Player }) players = new MapSchema<Player>();
 }

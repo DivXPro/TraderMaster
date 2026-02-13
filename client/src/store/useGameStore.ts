@@ -7,7 +7,6 @@ interface GameState {
   marketData: Candle[];
   lastTime: number | null;
   lastPrice: number | null;
-  
   // Betting
   bets: BetData[];
   predictionCells: PredictionCellData[];

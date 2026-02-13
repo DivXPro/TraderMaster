@@ -1,9 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import type { IChartApi, ISeriesApi, MouseEventParams } from 'lightweight-charts';
 import * as Colyseus from '@colyseus/sdk';
-import type { SchemaCallback } from '@colyseus/schema';
 import type { BetData as BetBox, PredictionCellData } from '@trader-master/shared';
-import { MarketState, Bet, PredictionCell } from '@trader-master/shared';
+import { MarketState, Bet, PredictionCell, Player, MessageType } from '@trader-master/shared';
+import type { CollectionCallback, SchemaCallback } from '@colyseus/schema';
 import { GridCanvas } from './GridCanvas';
 import { useGameStore } from '../store/useGameStore';
 
@@ -16,6 +16,7 @@ interface GameOverlayProps {
 }
 
 export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, lastTime, lastPrice }) => {
+    const callbacks = useMemo(() => Colyseus.Callbacks.get(room), [room]);
     const bets = useGameStore((state) => state.bets);
     const predictionCells = useGameStore((state) => state.predictionCells);
     const addBet = useGameStore((state) => state.addBet);
@@ -24,12 +25,6 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
     const removePredictionCell = useGameStore((state) => state.removePredictionCell);
     const setBalance = useGameStore((state) => state.setBalance);
     const balance = useGameStore((state) => state.balance);
-    const callbacks = Colyseus.Callbacks.get(room);
-
-    // Initialize user balance
-    useEffect(() => {
-        setBalance(50000);
-    }, [setBalance]);
 
     // Use ref to access latest lastTime in event listener without re-binding
     const lastTimeRef = useRef(lastTime);
@@ -98,15 +93,32 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
             );
 
             if (clickedCell) {
+                 const currentBets = useGameStore.getState().bets;
+                 const existingBet = currentBets.find(b => b.cellId === clickedCell.id && b.ownerId === room.sessionId);
+
+                 if (existingBet) {
+                     alert("You have already placed a bet on this cell!");
+                     return;
+                 }
+
+                 // Check balance
+                 const currentBalance = useGameStore.getState().balance;
+                 const betAmount = 100;
+                 
+                 if (currentBalance < betAmount) {
+                     alert("Insufficient balance!");
+                     return;
+                 }
+
                  // Place Bet
                  const bet = {
                      cellId: clickedCell.id,
-                     amount: 100, // Default amount
+                     amount: betAmount, // Default amount
                      currency: 'USD'
                  };
                  console.log('Placing bet on cell:', clickedCell.id, bet);
                  // Emit event to server
-                 room.send('place_bet', bet);
+                 room.send(MessageType.PLACE_BET, bet);
             } else {
                 console.log('Click ignored: No prediction cell found at', t, p);
             }
@@ -151,20 +163,45 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
             odds: cell.odds
         });
 
-        // Bets Sync
-        callbacks.onAdd('bets', (bet: Bet, key: string) => {
-            addBet(toBetBox(bet));
-            (bet as unknown as SchemaCallback<Bet>).onChange(() => {
-                updateBet(toBetBox(bet));
-            });
-        });
-    
-        if (room.state.bets) {
-            room.state.bets.forEach((bet: Bet) => {
-                addBet(toBetBox(bet));
-                (bet as unknown as SchemaCallback<Bet>).onChange(() => {
-                updateBet(toBetBox(bet));
+        // Bets Sync (via Player)
+        const handlePlayer = (player: Player) => {
+             if (player.id === room.sessionId) {
+                 console.log("Current player connected:", player.id);
+                 
+                // 1. Sync Balance
+                setBalance(player.balance);
+                
+                callbacks.listen(player, 'balance', () => {
+                    setBalance(player.balance);
                 });
+
+                //  // 2. Sync Bets
+                //  // Initial Bets Load
+                //  player.bets.forEach((bet: Bet) => {
+                //      addBet(toBetBox(bet));
+                //  });
+
+                 // Listen for new bets
+                 // Cast to unknown then CollectionCallback to access onAdd
+                callbacks.listen(player, 'bets', (currentBets, previousBets) => {
+                    console.debug('currentBets', currentBets);
+                    console.debug('previousBets', previousBets);
+                    currentBets.forEach((bet: Bet) => {
+                        addBet(toBetBox(bet));
+                    });
+                });
+             }
+        };
+
+        // Listen for players
+        callbacks.onAdd('players', (player: Player, key: string) => {
+             handlePlayer(player);
+        });
+
+        // Also check existing players
+        if (room.state.players) {
+            room.state.players.forEach((player: Player) => {
+                handlePlayer(player);
             });
         }
 
@@ -184,10 +221,12 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
             });
         }
 
+
+
         return () => {
              // Cleanup if needed
         };
-    }, [room, addBet, updateBet, addPredictionCell, removePredictionCell, callbacks]);
+    }, [room, addBet, updateBet, addPredictionCell, removePredictionCell, callbacks, setBalance]);
 
     return (
         <div 
