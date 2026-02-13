@@ -22,6 +22,7 @@ function App() {
   const [chartMode, setChartMode] = useState<'line' | 'candlestick'>('line');
   const [marketData, setMarketData] = useState<Candle[]>([]);
   const [room, setRoom] = useState<Colyseus.Room<MarketState> | null>(null);
+  const lastCandleTimeRef = useRef<number>(0);
 
   const bets = useGameStore((state) => state.bets);
   const balance = useGameStore((state) => state.balance);
@@ -172,8 +173,13 @@ function App() {
 
     // Initial Data Load
     if (marketData.length > 0) {
+      // Ensure unique and sorted data for initial load
+      const uniqueData = new Map();
+      marketData.forEach(item => uniqueData.set(item.time, item));
+      const sortedData = Array.from(uniqueData.values()).sort((a, b) => a.time - b.time);
+
       if (chartMode === 'candlestick') {
-        const data: CandlestickData[] = marketData.map(item => ({
+        const data: CandlestickData[] = sortedData.map(item => ({
           time: item.time as UTCTimestamp,
           open: item.open,
           high: item.high,
@@ -182,7 +188,7 @@ function App() {
         }));
         (series as ISeriesApi<"Candlestick">).setData(data);
       } else {
-        const data: LineData[] = marketData.map(item => ({
+        const data: LineData[] = sortedData.map(item => ({
           time: item.time as UTCTimestamp,
           value: item.close,
         }));
@@ -208,9 +214,11 @@ function App() {
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      setChartApi(null);
+      setSeriesApi(null);
       chart.remove();
     };
-  }, [chartMode, marketData]); // Re-create chart when mode changes
+  }, [chartMode]); // Re-create chart only when mode changes
 
   // Data Updates
   useEffect(() => {
@@ -220,6 +228,10 @@ function App() {
       const sortedData = data.sort((a, b) => a.time - b.time);
       setMarketData(sortedData);
       
+      if (sortedData.length > 0) {
+        lastCandleTimeRef.current = sortedData[sortedData.length - 1].time;
+      }
+
       if (chartMode === 'candlestick') {
         const chartData: CandlestickData[] = sortedData.map(item => ({
           time: item.time as UTCTimestamp,
@@ -239,7 +251,24 @@ function App() {
     };
 
     const handlePrice = (data: Candle) => {
-      setMarketData(prev => [...prev, data]);
+      // Validate time order
+      if (data.time < lastCandleTimeRef.current) {
+        console.warn('Received out-of-order data, ignoring:', data);
+        return;
+      }
+      
+      lastCandleTimeRef.current = data.time;
+
+      setMarketData(prev => {
+        const last = prev[prev.length - 1];
+        if (last && last.time === data.time) {
+            // Update last candle
+            const updated = [...prev];
+            updated[prev.length - 1] = data;
+            return updated;
+        }
+        return [...prev, data];
+      });
       
       if (chartMode === 'candlestick') {
         const chartItem: CandlestickData = {

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import type { IChartApi, ISeriesApi, MouseEventParams } from 'lightweight-charts';
 import * as Colyseus from '@colyseus/sdk';
-import type { CollectionCallback, SchemaCallback } from '@colyseus/schema';
+import type { SchemaCallback } from '@colyseus/schema';
 import type { BetData as BetBox, PredictionCellData } from '@trader-master/shared';
 import { MarketState, Bet, PredictionCell } from '@trader-master/shared';
 import { GridCanvas } from './GridCanvas';
@@ -194,7 +194,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
             className="game-overlay-container"
             style={{ position: 'absolute', top:0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
         >
-            <GridCanvas 
+            <GridCanvas
                 chart={chart}
                 series={series}
                 bets={bets}
