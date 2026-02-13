@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, UTCTimestamp, CandlestickData, LineData } from 'lightweight-charts';
 import * as Colyseus from '@colyseus/sdk';
-import { MarketState, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_LAYERS, PREDICTION_INITIAL_COLUMNS } from '@trader-master/shared';
+import { MarketState, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_INITIAL_COLUMNS } from '@trader-master/shared';
 import type { Candle } from '@trader-master/shared';
 import { GameOverlay } from './components/GameOverlay';
 import { useGameStore } from './store/useGameStore';
@@ -10,6 +10,7 @@ import './components/GameOverlay.css';
 import './App.css';
 
 // Initialize Colyseus Client
+const SCREEN_CELLS = 8;
 const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
 const host = window.location.host;
 const client = new Colyseus.Client(`${protocol}://${host}/api`);
@@ -81,11 +82,11 @@ function App() {
         // Calculation: 
         // Chart Height (500) - TimeScale (~26) = ~474px
         // Vertical Content: 474 * 0.8 (margins) = ~379px
-        // Target Blocks Vertical: PREDICTION_LAYERS * 2
-        // Block Height: 379 / (PREDICTION_LAYERS * 2)
+        // Target Blocks Vertical: PREDICTION_LAYERS
+        // Block Height: 379 / PREDICTION_LAYERS
         // Block Width (Time): PREDICTION_DURATION (30s)
         // BarSpacing: Block Height / PREDICTION_DURATION
-        barSpacing: ((500 - 26) * 0.8 / (PREDICTION_LAYERS * 2)) / PREDICTION_DURATION, 
+        barSpacing: ((500 - 26) * 0.8 / SCREEN_CELLS) / PREDICTION_DURATION, 
         // Default right offset (empty space on the right in bars)
         // We calculate this dynamically below, but set a safe default
         rightOffset: 0, 
@@ -110,7 +111,7 @@ function App() {
         const res = original();
         if (res === null) return null;
 
-        const TARGET_VISUAL_RANGE = (PREDICTION_LAYERS * 2) * PREDICTION_PRICE_HEIGHT; // blocks
+        const TARGET_VISUAL_RANGE = SCREEN_CELLS * PREDICTION_PRICE_HEIGHT; // blocks
         
         // Calculate center of the current data
         const center = (res.priceRange.minValue + res.priceRange.maxValue) / 2;
@@ -209,7 +210,7 @@ function App() {
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [chartMode]); // Re-create chart when mode changes
+  }, [chartMode, marketData]); // Re-create chart when mode changes
 
   // Data Updates
   useEffect(() => {

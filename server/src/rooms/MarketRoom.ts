@@ -149,17 +149,9 @@ export class MarketRoom extends Room {
         // Align generation to grid to ensure consistent vertical positioning
         const basePrice = Math.floor(currentPrice / PREDICTION_PRICE_HEIGHT) * PREDICTION_PRICE_HEIGHT;
 
-        // Up cells: Start from basePrice upwards (includes the cell containing currentPrice)
-        for (let i = 1; i <= PREDICTION_LAYERS; i++) {
-            const low = basePrice + (i * PREDICTION_PRICE_HEIGHT);
+        for (let i = 0; i < PREDICTION_LAYERS; i ++) {
+            const low = basePrice + ((PREDICTION_LAYERS / 2) - i) * PREDICTION_PRICE_HEIGHT;
             const high = low + PREDICTION_PRICE_HEIGHT;
-            this.createPredictionCell(low, high, currentTime, endTime, timeToMaturity);
-        }
-
-        // Down cells: Start from basePrice downwards
-        for (let i = 0; i < PREDICTION_LAYERS; i++) {
-            const high = basePrice - (i * PREDICTION_PRICE_HEIGHT);
-            const low = high - PREDICTION_PRICE_HEIGHT;
             this.createPredictionCell(low, high, currentTime, endTime, timeToMaturity);
         }
     }
