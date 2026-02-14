@@ -49,7 +49,12 @@ export class MarketRoom extends Room {
             }
 
             // Deduct balance
+            if (player.balance < amount) {
+                client.send(MessageType.ERROR, { message: "Insufficient balance" });
+                return;
+            }
             player.balance -= amount;
+            console.log(`Player ${client.sessionId} balance deducted by ${amount}. New balance: ${player.balance}`);
 
             const bet = new Bet();
             bet.id = Math.random().toString(36).substring(7);
@@ -66,7 +71,7 @@ export class MarketRoom extends Room {
             player.bets.set(bet.id, bet);
             console.log(`New bet placed: ${bet.id} by ${client.sessionId} Amount: ${amount} Odds: ${cell.odds}`);
             
-            client.send(MessageType.BET_PLACED, { id: bet.id, odds: cell.odds });
+            client.send(MessageType.BET_PLACED, { id: bet.id, odds: cell.odds, cellId: cell.id });
         });
 
         // 1 second tick

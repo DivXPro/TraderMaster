@@ -2,13 +2,17 @@ import express from 'express';
 import { matchMaker, defineServer, defineRoom } from 'colyseus';
 import { monitor } from '@colyseus/monitor';
 import { playground } from "@colyseus/playground";
+import { Encoder } from "@colyseus/schema";
 import cors from 'cors';
 import { MarketRoom } from './rooms/MarketRoom';
+
+// Increase Colyseus Schema buffer size to handle large state (e.g. many prediction cells)
+Encoder.BUFFER_SIZE = 1024 * 1024; // 1 MB
 
 const port = Number(process.env.PORT || 3000);
 
 const server = defineServer({
-    devMode: true,
+    devMode: false,
     express: (app) => {
         //
         // Include express middlewares (e.g. JSON body parser)

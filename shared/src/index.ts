@@ -28,6 +28,13 @@ export interface PredictionCellData {
     lowPrice: number;
     probability: number;
     odds: number;
+    status?: string;
+}
+
+export interface PlayerData {
+    id: string;
+    balance: number;
+    connected: boolean;
 }
 
 export * from './schema/MarketState';

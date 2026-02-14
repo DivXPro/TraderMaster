@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import type { BetData as BetBox, PredictionCellData } from '@trader-master/shared';
-import { Application, Graphics, Text, TextStyle, Container, FederatedPointerEvent, Rectangle } from 'pixi.js';
+import { Application, Graphics, Text, TextStyle, Container, Rectangle } from 'pixi.js';
 import { bsCallPrice, bsPutPrice, RISK_FREE_RATE, VOLATILITY } from '../utils/pricing';
 
 interface GridCanvasProps {
@@ -14,12 +14,17 @@ interface GridCanvasProps {
     onCellClick?: (cellId: string) => void;
 }
 
-export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, predictionCells, lastTime, lastPrice, onCellClick }) => {
+export const GridCanvas: React.FC<GridCanvasProps> = (props) => {
+    const { chart, series, bets, predictionCells, lastTime, lastPrice } = props;
     const overlayRef = useRef<HTMLDivElement>(null);
     const appRef = useRef<Application | null>(null);
     const gridGraphicsRef = useRef<Graphics | null>(null);
     const textContainerRef = useRef<Container | null>(null);
     
+    // Keep track of latest props for event handlers
+    const propsRef = useRef(props);
+    propsRef.current = props;
+
     const [pixiReady, setPixiReady] = useState(false);
     
     // Sync bets position on chart scroll/zoom
@@ -35,15 +40,119 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
             await app.init({ 
                 // resizeTo: overlayRef.current!, // Removed to avoid conflict with manual resize
                 backgroundAlpha: 0,
-                resolution: window.devicePixelRatio || 1,
+                resolution: Math.max(1, window.devicePixelRatio || 1),
                 autoDensity: true,
-                antialias: true
+                antialias: false,
+                roundPixels: true
             });
             
             console.log('PixiJS Initialized');
 
             if (overlayRef.current) {
                 overlayRef.current.appendChild(app.canvas);
+                app.canvas.style.position = 'absolute';
+                app.canvas.style.top = '0';
+                app.canvas.style.left = '0';
+                app.canvas.style.pointerEvents = 'auto'; // Ensure canvas captures events
+                app.canvas.style.zIndex = '100';
+                
+                // Attach Click Handler (Native DOM Event) once
+                const handlePointerDown = (e: PointerEvent) => {
+                    // Access latest props via ref
+                    const { onCellClick, chart, series, predictionCells } = propsRef.current;
+                    
+                    console.debug('Canvas pointerdown:', e.clientX, e.clientY);
+                    
+                    if (onCellClick && app.canvas) {
+                        const rect = app.canvas.getBoundingClientRect();
+                        const x = e.clientX - rect.left;
+                        const y = e.clientY - rect.top;
+                        
+                        console.debug('Click relative to canvas:', x, y, 'Rect:', rect);
+
+                        const timeScale = chart.timeScale();
+                        
+                        // Try standard conversion first
+                        let t = timeScale.coordinateToTime(x) as number | null;
+                        
+                        // Future time estimation if needed
+                        if (t === null) {
+                            const logical = timeScale.coordinateToLogical(x);
+                            const logicalRange = timeScale.getVisibleLogicalRange();
+                            
+                            if (logical !== null && logicalRange) {
+                                // Estimate interval using visible range
+                                const startLogical = Math.floor(logicalRange.from);
+                                const endLogical = Math.ceil(logicalRange.to);
+                                
+                                // Ensure we have a valid range to calculate interval
+                                if (endLogical > startLogical) {
+                                    // Use explicit type casting for internal Lightweight Charts API compatibility if needed, 
+                                    // but try public API first. coordinateToTime may return null for out of range indices.
+                                    // We need to find two valid points to calculate the interval (seconds per logical index).
+                                    
+                                    let t1: number | null = null;
+                                    let l1: number | null = null;
+                                    let t2: number | null = null;
+                                    let l2: number | null = null;
+
+                                    // Scan for valid points
+                                    for (let i = startLogical; i <= endLogical; i++) {
+                                        const time = timeScale.coordinateToTime(timeScale.logicalToCoordinate(i as any)!);
+                                        if (time !== null) {
+                                            if (t1 === null) {
+                                                t1 = time as number;
+                                                l1 = i;
+                                            } else if (i > l1! + 5) { // Ensure some distance for accuracy
+                                                t2 = time as number;
+                                                l2 = i;
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    // If we found two points, interpolate/extrapolate
+                                    if (t1 !== null && t2 !== null && l1 !== null && l2 !== null) {
+                                        const interval = (t2 - t1) / (l2 - l1);
+                                        t = t1 + (logical - l1) * interval;
+                                    } else if (t1 !== null && l1 !== null) {
+                                        // Fallback with default interval (e.g., 1s or 30s depending on bar spacing)
+                                        // Assuming 1s per bar if we can't determine
+                                        const defaultInterval = 1; 
+                                        t = t1 + (logical - l1) * defaultInterval;
+                                    }
+                                }
+                            }
+                        }
+
+                        const p = series.coordinateToPrice(y);
+                        console.log('Click coordinates:', x, y, 'Time:', t, 'Price:', p);
+                        
+                        if (t !== null && p !== null) {
+                            const clickedCell = predictionCells.find(c => 
+                               t! >= c.startTime && t! <= c.endTime && 
+                               p >= c.lowPrice && p <= c.highPrice
+                            );
+                            
+                            if (clickedCell) {
+                                console.log('Cell clicked:', clickedCell.id);
+                                onCellClick(clickedCell.id);
+                            } else {
+                                console.log('No cell found at click location');
+                                // Debug: print a few cells to see why it missed
+                                if (predictionCells.length > 0) {
+                                    const c = predictionCells[0];
+                                    console.log('Sample cell:', c.startTime, c.endTime, c.lowPrice, c.highPrice);
+                                } else {
+                                    console.log('No prediction cells available');
+                                }
+                            }
+                        }
+                    }
+                };
+                
+                app.canvas.addEventListener('pointerdown', handlePointerDown);
+                // Store handler for cleanup if needed (though component unmount cleans up app)
             }
             
             // Create Graphics for Grid
@@ -99,30 +208,18 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
         // console.log('DrawGrid:', width, height, 'PixiReady:', pixiReady);
 
         if (width <= 0 || height <= 0) return;
-
-        // Handle Retina/High DPI Screens
-        // const dpr = window.devicePixelRatio || 1;
-        const dpr = 1
-        // Force resolution to 1 because we will manually scale the canvas size and coordinates
-        if (app.renderer.resolution !== 1) {
-            app.renderer.resolution = 1;
-        }
-
         // Resize Pixi app to physical pixels
         // app.canvas.width/height will match these values
         const targetPhysicalWidth = width;
         const targetPhysicalHeight = height;
 
         if (app.canvas.width !== targetPhysicalWidth || app.canvas.height !== targetPhysicalHeight) {
-            console.log('Pixi Resize (Physical):', targetPhysicalWidth, targetPhysicalHeight, 'DPR:', dpr);
             app.renderer.resize(targetPhysicalWidth, targetPhysicalHeight);
             
             // Explicitly set style dimensions to match CSS pixels (logical size)
             app.canvas.style.width = `${width}px`;
             app.canvas.style.height = `${height}px`;
-            app.canvas.style.position = 'absolute';
-            app.canvas.style.top = '0';
-            app.canvas.style.left = '0';
+            // Position styles moved to initPixi
         }
 
         // Clear Graphics
@@ -131,52 +228,8 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
         // Hit Area for full coverage
         graphics.hitArea = new Rectangle(0, 0, width, height);
 
-        // Click Handler
-        graphics.removeAllListeners(); // Clean up old listeners
-        graphics.on('pointerdown', (e: FederatedPointerEvent) => {
-             if (onCellClick) {
-                 const localPoint = graphics.toLocal(e.global);
-                 const timeScale = chart.timeScale();
-                 
-                 // Try standard conversion first
-                 let t = timeScale.coordinateToTime(localPoint.x) as number | null;
-                 
-                 // Future time estimation if needed
-                 if (t === null) {
-                     const logical = timeScale.coordinateToLogical(localPoint.x);
-                     const logicalRange = timeScale.getVisibleLogicalRange();
-                     
-                     if (logical !== null && logicalRange) {
-                         // Estimate interval using visible range
-                         const startLogical = Math.floor(logicalRange.from);
-                         const endLogical = Math.ceil(logicalRange.to);
-                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                         const t1 = timeScale.coordinateToTime(timeScale.logicalToCoordinate(startLogical as any)!) as number;
-                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                         const t2 = timeScale.coordinateToTime(timeScale.logicalToCoordinate(endLogical as any)!) as number;
-                         
-                         if (t1 && t2 && endLogical > startLogical) {
-                             const interval = (t2 - t1) / (endLogical - startLogical);
-                             t = t1 + (logical - startLogical) * interval;
-                         }
-                     }
-                 }
-
-                 const p = series.coordinateToPrice(localPoint.y);
-                 
-                 if (t !== null && p !== null) {
-                     const clickedCell = predictionCells.find(c => 
-                        t! >= c.startTime && t! <= c.endTime && 
-                        p >= c.lowPrice && p <= c.highPrice
-                     );
-                     
-                     if (clickedCell) {
-                         onCellClick(clickedCell.id);
-                     }
-                 }
-             }
-        });
-
+        // Click Handler removed from here - attached in initPixi
+        
         // Manage Text Reuse
         const existingTexts = textContainer.children as Text[];
         let textIndex = 0;
@@ -284,14 +337,14 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
             // Skip if completely off-screen
             if (x2 < 0 || x1 > width) return;
 
-            // Manual High-DPI Scaling: Scale all logical coordinates to physical pixels
-            const x1_px = x1 * dpr;
-            const x2_px = x2 * dpr;
-            const y1_px = y1 * dpr;
-            const y2_px = y2 * dpr;
+            // Pixel-align coordinates for crisp rendering
+            const x1_px = Math.round(x1);
+            const x2_px = Math.round(x2);
+            const y1_px = Math.round(y1);
+            const y2_px = Math.round(y2);
 
-            const w_px = x2_px - x1_px;
-            const h_px = Math.abs(y2_px - y1_px);
+            const w_px = Math.max(0, x2_px - x1_px);
+            const h_px = Math.max(0, Math.abs(y2_px - y1_px));
             const rY_px = Math.min(y1_px, y2_px);
 
             // Determine Time Status
@@ -361,10 +414,10 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
             }
 
             // Draw Rect (using physical pixels)
-            graphics.rect(x1_px + 1 * dpr, rY_px + 1 * dpr, w_px - 2 * dpr, h_px - 2 * dpr);
+            graphics.rect(x1_px + 0.5, rY_px + 0.5, Math.max(0, w_px - 1), Math.max(0, h_px - 1));
             graphics.fill({ color: fillColor, alpha: fillAlpha });
             // Stroke width scaled by dpr
-            graphics.stroke({ color: strokeColor, alpha: strokeAlpha, width: 1 * dpr });
+            graphics.stroke({ color: strokeColor, alpha: strokeAlpha, width: 1 });
 
             // Option Pricing or Probability Display
             // Use cell.probability if available, otherwise calculate option price (fallback or for reference)
@@ -390,7 +443,7 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
 
             const textStyle = new TextStyle({
                 fontFamily: 'sans-serif',
-                fontSize: 10 * dpr, // Scale font size
+                fontSize: 12,
                 fill: textColor,
                 align: 'center',
             });
@@ -403,6 +456,7 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({ chart, series, bets, pre
         };
 
         predictionCells.forEach(drawCell);
+        console.log('predictionCells size', predictionCells.length);
         
         // Hide unused text objects
         for (let i = textIndex; i < existingTexts.length; i++) {

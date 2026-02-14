@@ -6,6 +6,7 @@ import { MarketState, MessageType, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT,
 import type { Candle } from '@trader-master/shared';
 import { GameOverlay } from './components/GameOverlay';
 import { useGameStore } from './store/useGameStore';
+import { syncRoomState } from './store/syncRoomState';
 import './components/GameOverlay.css';
 import './App.css';
 
@@ -23,6 +24,7 @@ function App() {
   const [marketData, setMarketData] = useState<Candle[]>([]);
   const [room, setRoom] = useState<Colyseus.Room<MarketState> | null>(null);
   const lastCandleTimeRef = useRef<number>(0);
+  const syncCleanupRef = useRef<(() => void) | null>(null);
 
   const bets = useGameStore((state) => state.bets);
   const balance = useGameStore((state) => state.balance);
@@ -76,6 +78,23 @@ function App() {
       }
     };
   }, []); // Run once on mount
+
+  // Apply centralized Colyseus state synchronization
+  useEffect(() => {
+    if (!room) return;
+    if (syncCleanupRef.current) {
+      syncCleanupRef.current();
+      syncCleanupRef.current = null;
+    }
+    const cleanup = syncRoomState(room);
+    syncCleanupRef.current = cleanup;
+    return () => {
+      if (syncCleanupRef.current) {
+        syncCleanupRef.current();
+        syncCleanupRef.current = null;
+      }
+    };
+  }, [room]);
 
   // Initialize Chart
   useEffect(() => {
@@ -167,7 +186,6 @@ function App() {
     setSeriesApi(series);
     
     // Initial centering logic
-    const width = chartContainerRef.current.clientWidth;
     // Calculate how many seconds fit in half width
     // barSpacing is pixels per second (since we divided by PREDICTION_DURATION in calculation, wait...)
     // No, barSpacing is pixels per bar. If 1 bar = 1 second.
