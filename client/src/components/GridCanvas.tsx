@@ -4,6 +4,8 @@ import type { BetData as BetBox, PredictionCellData } from '@trader-master/share
 import { Application, Graphics, Text, TextStyle, Container, Rectangle } from 'pixi.js';
 import { bsCallPrice, bsPutPrice, RISK_FREE_RATE, VOLATILITY } from '../utils/pricing';
 
+const RECENT_SETTLEMENT_WINDOW = 20;
+
 interface GridCanvasProps {
     chart: IChartApi;
     series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
@@ -393,24 +395,32 @@ export const GridCanvas: React.FC<GridCanvasProps> = (props) => {
 
             if (bet) {
                     if (bet.status === 'won') {
-                        fillColor = 0x2ECC71; // Green
+                        fillColor = 0x2ECC71;
                         fillAlpha = 0.3;
                         strokeColor = 0x2ECC71;
                         strokeAlpha = 1;
                     } else if (bet.status === 'lost') {
-                        fillColor = 0xE74C3C; // Red
+                        fillColor = 0xE74C3C;
                         fillAlpha = 0.3;
                         strokeColor = 0xE74C3C;
                         strokeAlpha = 0.8;
                     } else {
-                        // Pending: Gold
                         fillColor = 0xFFD700;
                         fillAlpha = 0.2;
                         strokeColor = 0xFFD700;
                         strokeAlpha = 0.8;
                     }
-                    textAlpha = 1; // Highlight text
+                    textAlpha = 1;
                     textColor = '#ffffff';
+
+                    if ((bet.status === 'won' || bet.status === 'lost') && lastTime !== null) {
+                        const dt = lastTime - bet.startTime;
+                        if (dt <= RECENT_SETTLEMENT_WINDOW) {
+                            const factor = Math.max(0, 1 - Math.max(0, dt) / RECENT_SETTLEMENT_WINDOW);
+                            fillAlpha = Math.min(1, fillAlpha + 0.3 * factor);
+                            strokeAlpha = Math.min(1, strokeAlpha + 0.4 * factor);
+                        }
+                    }
             }
 
             // Draw Rect (using physical pixels)
@@ -419,15 +429,15 @@ export const GridCanvas: React.FC<GridCanvasProps> = (props) => {
             // Stroke width scaled by dpr
             graphics.stroke({ color: strokeColor, alpha: strokeAlpha, width: 1 });
 
-            // Option Pricing or Probability Display
-            // Use cell.probability if available, otherwise calculate option price (fallback or for reference)
-            
-            // For now, let's display the probability from the cell if available
             let displayText = '';
-            if (cell.probability !== undefined) {
+            if (bet && bet.status === 'won') {
+                const v = bet.payout || bet.amount * (cell.odds || 1);
+                displayText = '+' + Math.round(v).toString();
+            } else if (bet && bet.status === 'lost') {
+                displayText = '-' + Math.round(bet.amount).toString();
+            } else if (cell.probability !== undefined) {
                 displayText = (cell.probability * 100).toFixed(1) + '%';
             } else {
-                // Fallback to BS model if probability not sent
                 const midPrice = (cell.highPrice + cell.lowPrice) / 2;
                 const maturitySec = lastTime !== null ? cell.endTime - lastTime : (cell.endTime - cell.startTime);
                 const T = Math.max(maturitySec, 0) / (365 * 24 * 3600);

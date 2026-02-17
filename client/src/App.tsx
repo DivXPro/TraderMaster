@@ -323,8 +323,30 @@ function App() {
       }
     };
 
+    const handleBetResult = (data: any) => {
+      const store = useGameStore.getState();
+      const betsArray = Array.isArray(data.bets)
+        ? data.bets
+        : data.bet
+        ? [data.bet]
+        : [];
+
+      betsArray.forEach((betData: any) => {
+        store.updateBet(betData);
+
+        if (betData.ownerId === room.sessionId && betData.cellId) {
+          store.updatePredictionCellStatus(betData.cellId, betData.status);
+        }
+      });
+
+      if (typeof data.balance === "number") {
+        store.setBalance(data.balance);
+      }
+    };
+
     room.onMessage(MessageType.HISTORY, handleHistory);
     room.onMessage(MessageType.PRICE, handlePrice);
+    room.onMessage(MessageType.BET_RESULT, handleBetResult);
 
     return () => {
         // Cleanup listeners if necessary, but room.leave() in parent effect might handle it.

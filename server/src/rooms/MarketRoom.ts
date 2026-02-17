@@ -159,16 +159,16 @@ export class MarketRoom extends Room {
 
         // Check Bets
         const now = candle.time;
-        const betsToRemove: string[] = [];
         const cellsToRemove: string[] = [];
 
         // Check Bets
         this.state.players.forEach((player) => {
-            const betsToRemove: string[] = [];
+            const settledBets: any[] = [];
+
             player.bets.forEach((bet: Bet, key: string) => {
                 if (bet.status === "pending") {
                     // 4. Settlement: Check at time point
-                    if (now >= bet.endTime) {
+                    if (now >= bet.startTime) {
                         // Check if market price is in prediction cell range
                         // Use [Low, High) for inclusive low, exclusive high to prevent double wins on boundary
                         const won = candle.close >= bet.lowPrice && candle.close < bet.highPrice;
@@ -178,49 +178,27 @@ export class MarketRoom extends Room {
                             bet.payout = bet.amount * bet.odds;
                             console.log(`Bet ${bet.id} WON! Payout: ${bet.payout}`);
                             
-                            // Add payout to player balance
                             player.balance += bet.payout;
-
-                            // Notify Client
-                            const client = this.clients.find(c => c.sessionId === bet.ownerId);
-                            if (client) {
-                                client.send(MessageType.BET_RESULT, { 
-                                    id: bet.id, 
-                                    status: "won", 
-                                    payout: bet.payout,
-                                    cellId: bet.cellId 
-                                });
-                            }
-
                         } else {
                             bet.status = "lost";
                             bet.payout = 0;
                             console.log(`Bet ${bet.id} LOST`);
-
-                            // Notify Client
-                            const client = this.clients.find(c => c.sessionId === bet.ownerId);
-                            if (client) {
-                                client.send(MessageType.BET_RESULT, { 
-                                    id: bet.id, 
-                                    status: "lost", 
-                                    payout: 0,
-                                    cellId: bet.cellId
-                                });
-                            }
                         }
-                    }
-                } else {
-                    // Cleanup old bets after a while
-                    // Logic: if bet is finished and time > endTime + 60s
-                    if (now > bet.endTime + 60) {
-                        betsToRemove.push(key);
+
+                        settledBets.push(bet.toJSON());
                     }
                 }
             });
 
-            betsToRemove.forEach(key => {
-                player.bets.delete(key);
-            });
+            if (settledBets.length > 0) {
+                const client = this.clients.find(c => c.sessionId === player.id);
+                if (client) {
+                    client.send(MessageType.BET_RESULT, { 
+                        bets: settledBets,
+                        balance: player.balance,
+                    });
+                }
+            }
         });
 
         // Cleanup expired Prediction Cells
