@@ -6,3 +6,8 @@ export enum MessageType {
   HISTORY = "history",
   PRICE = "price",
 }
+
+export interface PlaceBetPayload {
+  amount: number;
+  cellId: string;
+}

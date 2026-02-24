@@ -1,5 +1,5 @@
 import { Room, Client } from "colyseus";
-import { MarketState, Bet, PredictionCell, Player, MessageType, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_GENERATION_INTERVAL, PREDICTION_LAYERS, PREDICTION_INITIAL_COLUMNS, PREDICTION_BET_LOCK_WINDOW } from "@trader-master/shared";
+import { MarketState, Bet, PredictionCell, Player, MessageType, PlaceBetPayload, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_GENERATION_INTERVAL, PREDICTION_LAYERS, PREDICTION_INITIAL_COLUMNS, PREDICTION_BET_LOCK_WINDOW } from "@trader-master/shared";
 import { Market } from "../market";
 import { BlackScholes } from "../utils/bs";
 
@@ -13,73 +13,7 @@ export class MarketRoom extends Room {
         this.state = new MarketState();
         this.market = new Market(100.0);
 
-        this.onMessage(MessageType.PLACE_BET, (client, data) => {
-            const amount = Number(data.amount);
-            // 3. Bet: Minimum amount limit
-            if (!amount || amount < 10) {
-                 client.send(MessageType.ERROR, { message: "Minimum bet amount is 10" });
-                 return;
-            }
-
-            // Check balance
-            const player = this.state.players.get(client.sessionId);
-            if (!player || player.balance < amount) {
-                client.send(MessageType.ERROR, { message: "Insufficient balance" });
-                return;
-            }
-
-            // Find Prediction Cell
-            const cell = this.state.predictionCells.get(data.cellId);
-            if (!cell) {
-                client.send(MessageType.ERROR, { message: "Prediction cell not found or expired" });
-                return;
-            }
-
-            // Check time lock window
-            const now = this.market.getCurrentTime();
-            if (cell.startTime <= now + PREDICTION_BET_LOCK_WINDOW) {
-                client.send(MessageType.ERROR, { message: "Betting for this cell is locked" });
-                return;
-            }
-
-            // Check if player already placed a bet on this cell
-            let alreadyBet = false;
-            player.bets.forEach((b) => {
-                if (b.cellId === cell.id) {
-                    alreadyBet = true;
-                }
-            });
-
-            if (alreadyBet) {
-                client.send(MessageType.ERROR, { message: "You have already placed a bet on this cell" });
-                return;
-            }
-
-            // Deduct balance
-            if (player.balance < amount) {
-                client.send(MessageType.ERROR, { message: "Insufficient balance" });
-                return;
-            }
-            player.balance -= amount;
-            console.log(`Player ${client.sessionId} balance deducted by ${amount}. New balance: ${player.balance}`);
-
-            const bet = new Bet();
-            bet.id = Math.random().toString(36).substring(7);
-            bet.cellId = cell.id;
-            bet.startTime = cell.startTime;
-            bet.endTime = cell.endTime;
-            bet.highPrice = cell.highPrice;
-            bet.lowPrice = cell.lowPrice;
-            bet.amount = amount;
-            bet.odds = cell.odds;
-            bet.status = "pending";
-            bet.ownerId = client.sessionId;
-
-            player.bets.set(bet.id, bet);
-            console.log(`New bet placed: ${bet.id} by ${client.sessionId} Amount: ${amount} Odds: ${cell.odds}`);
-            
-            client.send(MessageType.BET_PLACED, { id: bet.id, odds: cell.odds, cellId: cell.id });
-        });
+        this.onMessage<PlaceBetPayload>(MessageType.PLACE_BET, (client, data) => this.handlePlaceBet(client, data));
 
         // 1 second tick
         this.setSimulationInterval((deltaTime) => this.update(deltaTime), 1000);
@@ -97,6 +31,74 @@ export class MarketRoom extends Room {
         // Fast-forward lastGenerationTime so we don't regenerate these immediately in update()
         // The next generation will happen when candle.time >= (now + (N-1)*30) + 30
         this.lastGenerationTime = now + (PREDICTION_INITIAL_COLUMNS - 1) * PREDICTION_GENERATION_INTERVAL;
+    }
+
+    handlePlaceBet(client: Client, data: PlaceBetPayload) {
+        const amount = Number(data.amount);
+        // 3. Bet: Minimum amount limit
+        if (!amount || amount < 10) {
+             client.send(MessageType.ERROR, { message: "Minimum bet amount is 10" });
+             return;
+        }
+
+        // Check balance
+        const player = this.state.players.get(client.sessionId);
+        if (!player || player.balance < amount) {
+            client.send(MessageType.ERROR, { message: "Insufficient balance" });
+            return;
+        }
+
+        // Find Prediction Cell
+        const cell = this.state.predictionCells.get(data.cellId);
+        if (!cell) {
+            client.send(MessageType.ERROR, { message: "Prediction cell not found or expired" });
+            return;
+        }
+
+        // Check time lock window
+        const now = this.market.getCurrentTime();
+        if (cell.startTime <= now + PREDICTION_BET_LOCK_WINDOW) {
+            client.send(MessageType.ERROR, { message: "Betting for this cell is locked" });
+            return;
+        }
+
+        // Check if player already placed a bet on this cell
+        let alreadyBet = false;
+        player.bets.forEach((b) => {
+            if (b.cellId === cell.id) {
+                alreadyBet = true;
+            }
+        });
+
+        if (alreadyBet) {
+            client.send(MessageType.ERROR, { message: "You have already placed a bet on this cell" });
+            return;
+        }
+
+        // Deduct balance
+        if (player.balance < amount) {
+            client.send(MessageType.ERROR, { message: "Insufficient balance" });
+            return;
+        }
+        player.balance -= amount;
+        console.log(`Player ${client.sessionId} balance deducted by ${amount}. New balance: ${player.balance}`);
+
+        const bet = new Bet();
+        bet.id = Math.random().toString(36).substring(7);
+        bet.cellId = cell.id;
+        bet.startTime = cell.startTime;
+        bet.endTime = cell.endTime;
+        bet.highPrice = cell.highPrice;
+        bet.lowPrice = cell.lowPrice;
+        bet.amount = amount;
+        bet.odds = cell.odds;
+        bet.status = "pending";
+        bet.ownerId = client.sessionId;
+
+        player.bets.set(bet.id, bet);
+        console.log(`New bet placed: ${bet.id} by ${client.sessionId} Amount: ${amount} Odds: ${cell.odds}`);
+        
+        client.send(MessageType.BET_PLACED, { id: bet.id, odds: cell.odds, cellId: cell.id });
     }
 
     onJoin(client: Client, options: any) {
