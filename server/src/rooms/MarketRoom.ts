@@ -1,5 +1,5 @@
 import { Room, Client } from "colyseus";
-import { MarketState, Bet, PredictionCell, Player, MessageType, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_GENERATION_INTERVAL, PREDICTION_LAYERS, PREDICTION_INITIAL_COLUMNS } from "@trader-master/shared";
+import { MarketState, Bet, PredictionCell, Player, MessageType, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_GENERATION_INTERVAL, PREDICTION_LAYERS, PREDICTION_INITIAL_COLUMNS, PREDICTION_BET_LOCK_WINDOW } from "@trader-master/shared";
 import { Market } from "../market";
 import { BlackScholes } from "../utils/bs";
 
@@ -32,6 +32,13 @@ export class MarketRoom extends Room {
             const cell = this.state.predictionCells.get(data.cellId);
             if (!cell) {
                 client.send(MessageType.ERROR, { message: "Prediction cell not found or expired" });
+                return;
+            }
+
+            // Check time lock window
+            const now = this.market.getCurrentTime();
+            if (cell.startTime <= now + PREDICTION_BET_LOCK_WINDOW) {
+                client.send(MessageType.ERROR, { message: "Betting for this cell is locked" });
                 return;
             }
 
@@ -151,14 +158,14 @@ export class MarketRoom extends Room {
         this.broadcast(MessageType.PRICE, candle);
         this.state.currentPrice = candle.close;
 
-        // Generate Prediction Cells (Every PREDICTION_GENERATION_INTERVAL seconds)
-        if (candle.time - this.lastGenerationTime >= PREDICTION_GENERATION_INTERVAL) {
-            this.generatePredictionCells(candle.close, candle.time);
-            this.lastGenerationTime = candle.time;
+        const now = candle.time;
+        const minFuture = now + (PREDICTION_INITIAL_COLUMNS - 1) * PREDICTION_GENERATION_INTERVAL;
+        if (this.lastGenerationTime < minFuture) {
+            const nextStartTime = this.lastGenerationTime + PREDICTION_GENERATION_INTERVAL;
+            this.generatePredictionCells(candle.close, nextStartTime);
+            this.lastGenerationTime = nextStartTime;
         }
 
-        // Check Bets
-        const now = candle.time;
         const cellsToRemove: string[] = [];
 
         // Check Bets
@@ -201,9 +208,17 @@ export class MarketRoom extends Room {
             }
         });
 
-        // Cleanup expired Prediction Cells
+        // Cleanup expired Prediction Cells (only those without any bets)
         this.state.predictionCells.forEach((cell: PredictionCell, key: string) => {
-            if (now > cell.endTime) {
+            let hasBet = false;
+            this.state.players.forEach((player) => {
+                player.bets.forEach((bet: Bet) => {
+                    if (bet.cellId === cell.id) {
+                        hasBet = true;
+                    }
+                });
+            });
+            if (!hasBet && now > cell.endTime) {
                 cellsToRemove.push(key);
             }
         });
@@ -214,14 +229,8 @@ export class MarketRoom extends Room {
     }
 
     private generatePredictionCells(currentPrice: number, currentTime: number) {
-        // Generate standardized cells
         const endTime = currentTime + PREDICTION_DURATION;
         const timeToMaturity = PREDICTION_DURATION / 31536000; // in years
-        
-        // Front-end visual range is about 6 units height.
-        // We generate PREDICTION_LAYERS layers up and PREDICTION_LAYERS layers down to fully cover the visible area.
-
-        // Align generation to grid to ensure consistent vertical positioning
         const basePrice = Math.floor(currentPrice / PREDICTION_PRICE_HEIGHT) * PREDICTION_PRICE_HEIGHT;
 
         for (let i = 0; i < PREDICTION_LAYERS; i ++) {
@@ -236,7 +245,6 @@ export class MarketRoom extends Room {
         const probability = BlackScholes.calculateProbability(currentPrice, low, high, T);
         const odds = BlackScholes.calculateOdds(probability);
 
-        // Always create cells to ensure grid is full, even if odds are extreme
         const cell = new PredictionCell();
         cell.id = Math.random().toString(36).substring(7);
         cell.startTime = startTime;
@@ -245,7 +253,7 @@ export class MarketRoom extends Room {
         cell.highPrice = high;
         cell.probability = probability;
         cell.odds = odds;
-        
+
         this.state.predictionCells.set(cell.id, cell);
     }
 }

@@ -10,6 +10,7 @@ export function syncRoomState(room: Colyseus.Room<MarketState>) {
 
     // Helpers
     const attachCell = (cell: any) => {
+        console.log("Attaching PredictionCell:", cell.id);
         useGameStore.getState().addPredictionCell(cell.toJSON());
         // Watch cell changes
         unsubs.push(callbacks.onChange(cell, () => {

@@ -3,6 +3,7 @@ import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import type { BetData as BetBox, PredictionCellData } from '@trader-master/shared';
 import { Application, Graphics, Text, TextStyle, Container, Rectangle } from 'pixi.js';
 import { bsCallPrice, bsPutPrice, RISK_FREE_RATE, VOLATILITY } from '../utils/pricing';
+import { PREDICTION_BET_LOCK_WINDOW } from '@trader-master/shared';
 
 const RECENT_SETTLEMENT_WINDOW = 20;
 
@@ -313,6 +314,10 @@ export const GridCanvas: React.FC<GridCanvasProps> = (props) => {
         }
         
         const drawCell = (cell: PredictionCellData) => {
+            if (lastTime !== null && lastTime > cell.endTime && !betsMap.has(cell.id)) {
+                return;
+            }
+
             let x1 = timeScale.timeToCoordinate(cell.startTime as UTCTimestamp);
             let x2 = timeScale.timeToCoordinate(cell.endTime as UTCTimestamp);
             const y1 = series.priceToCoordinate(cell.highPrice);
@@ -356,7 +361,7 @@ export const GridCanvas: React.FC<GridCanvasProps> = (props) => {
             if (lastTime !== null) {
                 if (cell.startTime < lastTime) {
                     isPast = true;
-                } else if (cell.startTime <= lastTime + 10) {
+                } else if (cell.startTime <= lastTime + PREDICTION_BET_LOCK_WINDOW) {
                     isLocked = true;
                 }
             }
