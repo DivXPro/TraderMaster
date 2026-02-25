@@ -2,35 +2,54 @@ import { Room, Client } from "colyseus";
 import { MarketState, Bet, PredictionCell, Player, MessageType, PlaceBetPayload, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_GENERATION_INTERVAL, PREDICTION_LAYERS, PREDICTION_INITIAL_COLUMNS, PREDICTION_BET_LOCK_WINDOW } from "@trader-master/shared";
 import { Market } from "../market";
 import { BlackScholes } from "../utils/bs";
+import { PythService } from "../services/PythService";
 
 export class MarketRoom extends Room {
     state: MarketState = new MarketState();
     private market: Market;
     private lastGenerationTime: number = 0;
+    private pyth: PythService;
+    private initialized: boolean = false;
 
     onCreate(options: any) {
         console.log("MarketRoom created", options);
         this.state = new MarketState();
+        // Initialize with placeholder, will be reset by Pyth
         this.market = new Market(100.0);
+
+        this.pyth = new PythService();
+        this.pyth.on('price_update', (data) => {
+            if (!this.initialized) {
+                console.log(`First price received: ${data.price}. Initializing Market...`);
+                this.market = new Market(data.price);
+                this.initialized = true;
+
+                // Initial Generation: Cover the right side of the chart (future)
+                const now = this.market.getCurrentTime();
+                const currentPrice = this.market.getCurrentPrice();
+                
+                for (let i = 0; i < PREDICTION_INITIAL_COLUMNS; i++) {
+                    this.generatePredictionCells(currentPrice, now + i * PREDICTION_GENERATION_INTERVAL);
+                }
+                this.lastGenerationTime = now + (PREDICTION_INITIAL_COLUMNS - 1) * PREDICTION_GENERATION_INTERVAL;
+                
+                // Broadcast new history to all clients so they sync with the real price
+                this.broadcast(MessageType.HISTORY, this.market.getHistory());
+            }
+            this.market.updatePrice(data.price);
+        });
+        this.pyth.start();
 
         this.onMessage<PlaceBetPayload>(MessageType.PLACE_BET, (client, data) => this.handlePlaceBet(client, data));
 
         // 1 second tick
         this.setSimulationInterval((deltaTime) => this.update(deltaTime), 1000);
+    }
 
-        // Initial Generation: Cover the right side of the chart (future)
-        // Generate a few columns ahead so the grid looks full immediately
-        const now = this.market.getCurrentTime();
-        const currentPrice = this.market.getCurrentPrice();
-        
-        for (let i = 0; i < PREDICTION_INITIAL_COLUMNS; i++) {
-            // Generate cells for: now, now+30, now+60, ...
-            this.generatePredictionCells(currentPrice, now + i * PREDICTION_GENERATION_INTERVAL);
+    onDispose() {
+        if (this.pyth) {
+            this.pyth.stop();
         }
-
-        // Fast-forward lastGenerationTime so we don't regenerate these immediately in update()
-        // The next generation will happen when candle.time >= (now + (N-1)*30) + 30
-        this.lastGenerationTime = now + (PREDICTION_INITIAL_COLUMNS - 1) * PREDICTION_GENERATION_INTERVAL;
     }
 
     handlePlaceBet(client: Client, data: PlaceBetPayload) {
@@ -154,6 +173,8 @@ export class MarketRoom extends Room {
     }
 
     update(deltaTime: number) {
+        if (!this.initialized) return;
+
         const candle = this.market.tick();
         
         // Broadcast new candle
