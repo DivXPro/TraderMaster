@@ -2,7 +2,10 @@ import { EventEmitter } from 'events';
 import { HermesClient } from "@pythnetwork/hermes-client";
 
 const HERMES_URL = 'https://hermes.pyth.network';
-const XAU_USD_PRICE_ID = '765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2';
+export const PRICE_IDS: Record<string, string> = {
+    'XAUUSD': '765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2',
+    // Add more symbols here as needed
+};
 
 export class PythService extends EventEmitter {
     private client: HermesClient;
@@ -12,10 +15,12 @@ export class PythService extends EventEmitter {
     private latestConf: number = 0;
     private lastUpdateTime: number = 0;
     private isConnected: boolean = false;
+    private symbol: string;
 
-    constructor() {
+    constructor(symbol: string = 'XAUUSD') {
         super();
         this.client = new HermesClient(HERMES_URL, { timeout: 30000 });
+        this.symbol = symbol;
     }
 
     public async start() {
@@ -28,10 +33,16 @@ export class PythService extends EventEmitter {
             this.reconnectTimeout = null;
         }
 
-        console.log(`Connecting to Pyth Hermes: ${HERMES_URL}`);
+        console.log(`Connecting to Pyth Hermes: ${HERMES_URL} for ${this.symbol}`);
+
+        const priceId = PRICE_IDS[this.symbol];
+        if (!priceId) {
+            console.error(`Price ID not found for symbol: ${this.symbol}`);
+            return;
+        }
 
         try {
-            this.eventSource = await this.client.getPriceUpdatesStream([XAU_USD_PRICE_ID], { parsed: true });
+            this.eventSource = await this.client.getPriceUpdatesStream([priceId], { parsed: true });
 
             if (!this.eventSource) {
                 this.scheduleReconnect();

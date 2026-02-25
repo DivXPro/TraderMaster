@@ -37,6 +37,17 @@ export interface PlayerData {
     connected: boolean;
 }
 
+export interface MarketRoomConfig {
+    roomName: string;
+    symbol: string;
+    predictionDuration?: number;
+    predictionPriceHeight?: number;
+    predictionGenerationInterval?: number;
+    predictionLayers?: number;
+    predictionInitialColumns?: number;
+    predictionBetLockWindow?: number;
+}
+
 export * from './schema/MarketState';
 export * from './constants';
 export * from './messages';

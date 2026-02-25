@@ -1,8 +1,10 @@
-import { Room, Client } from "colyseus";
-import { MarketState, Bet, PredictionCell, Player, MessageType, PlaceBetPayload, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_GENERATION_INTERVAL, PREDICTION_LAYERS, PREDICTION_INITIAL_COLUMNS, PREDICTION_BET_LOCK_WINDOW } from "@trader-master/shared";
+import { Room, Client, RoomOptions } from "colyseus";
+import { MarketState, Bet, PredictionCell, Player, MessageType, MarketRoomConfig, PlaceBetPayload, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_GENERATION_INTERVAL, PREDICTION_LAYERS, PREDICTION_INITIAL_COLUMNS, PREDICTION_BET_LOCK_WINDOW } from "@trader-master/shared";
 import { Market } from "../market";
 import { BlackScholes } from "../utils/bs";
 import { PythService } from "../services/PythService";
+
+export type MarketRoomOptions = RoomOptions & MarketRoomConfig
 
 export class MarketRoom extends Room {
     state: MarketState = new MarketState();
@@ -10,14 +12,29 @@ export class MarketRoom extends Room {
     private lastGenerationTime: number = 0;
     private pyth: PythService;
     private initialized: boolean = false;
+    private options: Required<MarketRoomConfig>;
 
-    onCreate(options: any) {
+    onCreate(options: MarketRoomOptions) {
         console.log("MarketRoom created", options);
+        this.roomName = options.roomName;
+        
+        // Initialize options with defaults from shared constants
+        this.options = {
+            roomName: options.roomName,
+            symbol: options.symbol,
+            predictionDuration: options.predictionDuration || PREDICTION_DURATION,
+            predictionPriceHeight: options.predictionPriceHeight || PREDICTION_PRICE_HEIGHT,
+            predictionGenerationInterval: options.predictionGenerationInterval || PREDICTION_GENERATION_INTERVAL,
+            predictionLayers: options.predictionLayers || PREDICTION_LAYERS,
+            predictionInitialColumns: options.predictionInitialColumns || PREDICTION_INITIAL_COLUMNS,
+            predictionBetLockWindow: options.predictionBetLockWindow || PREDICTION_BET_LOCK_WINDOW,
+        };
+
         this.state = new MarketState();
         // Initialize with placeholder, will be reset by Pyth
         this.market = new Market(100.0);
 
-        this.pyth = new PythService();
+        this.pyth = new PythService(this.options.symbol);
         this.pyth.on('price_update', (data) => {
             if (!this.initialized) {
                 console.log(`First price received: ${data.price}. Initializing Market...`);
@@ -28,10 +45,10 @@ export class MarketRoom extends Room {
                 const now = this.market.getCurrentTime();
                 const currentPrice = this.market.getCurrentPrice();
                 
-                for (let i = 0; i < PREDICTION_INITIAL_COLUMNS; i++) {
-                    this.generatePredictionCells(currentPrice, now + i * PREDICTION_GENERATION_INTERVAL);
+                for (let i = 0; i < this.options.predictionInitialColumns; i++) {
+                    this.generatePredictionCells(currentPrice, now + i * this.options.predictionGenerationInterval);
                 }
-                this.lastGenerationTime = now + (PREDICTION_INITIAL_COLUMNS - 1) * PREDICTION_GENERATION_INTERVAL;
+                this.lastGenerationTime = now + (this.options.predictionInitialColumns - 1) * this.options.predictionGenerationInterval;
                 
                 // Broadcast new history to all clients so they sync with the real price
                 this.broadcast(MessageType.HISTORY, this.market.getHistory());
@@ -76,7 +93,7 @@ export class MarketRoom extends Room {
 
         // Check time lock window
         const now = this.market.getCurrentTime();
-        if (cell.startTime <= now + PREDICTION_BET_LOCK_WINDOW) {
+        if (cell.startTime <= now + this.options.predictionBetLockWindow) {
             client.send(MessageType.ERROR, { message: "Betting for this cell is locked" });
             return;
         }
@@ -182,9 +199,9 @@ export class MarketRoom extends Room {
         this.state.currentPrice = candle.close;
 
         const now = candle.time;
-        const minFuture = now + (PREDICTION_INITIAL_COLUMNS - 1) * PREDICTION_GENERATION_INTERVAL;
+        const minFuture = now + (this.options.predictionInitialColumns - 1) * this.options.predictionGenerationInterval;
         if (this.lastGenerationTime < minFuture) {
-            const nextStartTime = this.lastGenerationTime + PREDICTION_GENERATION_INTERVAL;
+            const nextStartTime = this.lastGenerationTime + this.options.predictionGenerationInterval;
             this.generatePredictionCells(candle.close, nextStartTime);
             this.lastGenerationTime = nextStartTime;
         }
@@ -252,13 +269,13 @@ export class MarketRoom extends Room {
     }
 
     private generatePredictionCells(currentPrice: number, currentTime: number) {
-        const endTime = currentTime + PREDICTION_DURATION;
-        const timeToMaturity = PREDICTION_DURATION / 31536000; // in years
-        const basePrice = Math.floor(currentPrice / PREDICTION_PRICE_HEIGHT) * PREDICTION_PRICE_HEIGHT;
+        const endTime = currentTime + this.options.predictionDuration;
+        const timeToMaturity = this.options.predictionDuration / 31536000; // in years
+        const basePrice = Math.floor(currentPrice / this.options.predictionPriceHeight) * this.options.predictionPriceHeight;
 
-        for (let i = 0; i < PREDICTION_LAYERS; i ++) {
-            const low = basePrice + ((PREDICTION_LAYERS / 2) - i) * PREDICTION_PRICE_HEIGHT;
-            const high = low + PREDICTION_PRICE_HEIGHT;
+        for (let i = 0; i < this.options.predictionLayers; i ++) {
+            const low = basePrice + ((this.options.predictionLayers / 2) - i) * this.options.predictionPriceHeight;
+            const high = low + this.options.predictionPriceHeight;
             this.createPredictionCell(low, high, currentTime, endTime, timeToMaturity);
         }
     }
