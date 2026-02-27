@@ -263,12 +263,61 @@ export const GridCanvas: React.FC<GridCanvasProps> = (props) => {
         const timeScale = chart.timeScale();
         
         // Check if chart is ready (has data and visible range)
-        if (timeScale.getVisibleLogicalRange() === null) return;
+        const logicalRange = timeScale.getVisibleLogicalRange();
+        if (logicalRange === null) {
+            return;
+        }
         
-        // Sample start time
-        const startTime = timeScale.coordinateToTime(0) as number | null;
+        // Calculate reference parameters for time projection
+        let refTime: number | null = null;
+        let refLogical: number | null = null;
+        let avgInterval = 1; // Default 1s
         
-        if (startTime === null) return;
+        // Find two points to estimate interval and establish reference
+        // We search for valid data points within the visible range (or slightly before/after)
+        // We prefer points that are integers (likely bar centers)
+        
+        let p1: { time: number, logical: number } | null = null;
+        let p2: { time: number, logical: number } | null = null;
+
+        // Scan a few points to find valid times
+        // Start from the "current" end of data if possible, or just scan visible range
+        const startScan = Math.floor(logicalRange.from);
+        const endScan = Math.ceil(logicalRange.to);
+        
+        for (let i = startScan; i <= endScan; i++) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const coord = timeScale.logicalToCoordinate(i as any);
+            if (coord !== null) {
+                const t = timeScale.coordinateToTime(coord);
+                if (typeof t === 'number') {
+                    if (!p1) {
+                        p1 = { time: t, logical: i };
+                    } else if (i > p1.logical + 2) { // Ensure some distance
+                        p2 = { time: t, logical: i };
+                        break; // Found two points
+                    }
+                }
+            }
+        }
+
+        if (p1) {
+            refTime = p1.time;
+            refLogical = p1.logical;
+            
+            if (p2) {
+                avgInterval = (p2.time - p1.time) / (p2.logical - p1.logical);
+            }
+        } else {
+             // Fallback if no valid points found (e.g., initial empty chart or far future)
+             // Try to use lastTime if available
+             if (lastTime !== null) {
+                 refTime = lastTime;
+                 // Assuming lastTime corresponds to the last logical index if we can't find others
+                 // This is a rough approximation but better than failing
+                 refLogical = logicalRange.to; 
+             }
+        }
 
         // Create Map for efficient bet lookup
         const betsMap = new Map<string, BetBox>();
@@ -276,51 +325,6 @@ export const GridCanvas: React.FC<GridCanvasProps> = (props) => {
             if (bet.cellId) betsMap.set(bet.cellId, bet);
         });
 
-        // Calculate reference parameters for time projection
-        let refTime: number | null = null;
-        let refLogical: number | null = null;
-        let avgInterval = 1; // Default 1s
-        
-        const logicalRange = timeScale.getVisibleLogicalRange();
-        if (logicalRange) {
-            // Find two points to estimate interval and establish reference
-            // We search for valid data points within the visible range (or slightly before/after)
-            // We prefer points that are integers (likely bar centers)
-            
-            let p1: { time: number, logical: number } | null = null;
-            let p2: { time: number, logical: number } | null = null;
-
-            // Scan a few points to find valid times
-            // Start from the "current" end of data if possible, or just scan visible range
-            const startScan = Math.floor(logicalRange.from);
-            const endScan = Math.ceil(logicalRange.to);
-            
-            for (let i = startScan; i <= endScan; i++) {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const coord = timeScale.logicalToCoordinate(i as any);
-                if (coord !== null) {
-                    const t = timeScale.coordinateToTime(coord);
-                    if (typeof t === 'number') {
-                        if (!p1) {
-                            p1 = { time: t, logical: i };
-                        } else if (i > p1.logical + 2) { // Ensure some distance
-                            p2 = { time: t, logical: i };
-                            break; // Found two points
-                        }
-                    }
-                }
-            }
-
-            if (p1) {
-                refTime = p1.time;
-                refLogical = p1.logical;
-                
-                if (p2) {
-                    avgInterval = (p2.time - p1.time) / (p2.logical - p1.logical);
-                }
-            }
-        }
-        
         const drawCell = (cell: PredictionCellData) => {
             if (lastTime !== null && lastTime > cell.endTime && !betsMap.has(cell.id)) {
                 return;
@@ -347,10 +351,14 @@ export const GridCanvas: React.FC<GridCanvasProps> = (props) => {
                 x2 = timeScale.logicalToCoordinate(targetLogical as any);
             }
 
-            if (x1 === null || x2 === null || y1 === null || y2 === null) return;
+            if (x1 === null || x2 === null || y1 === null || y2 === null) {
+                return;
+            }
 
             // Skip if completely off-screen
-            if (x2 < 0 || x1 > width) return;
+            if (x2 < 0 || x1 > width || y1 > height || y2 < 0) {
+                return;
+            }
 
             // Pixel-align coordinates for crisp rendering
             const x1_px = Math.round(x1);
@@ -479,7 +487,6 @@ export const GridCanvas: React.FC<GridCanvasProps> = (props) => {
         };
 
         predictionCells.forEach(drawCell);
-        console.log('predictionCells size', predictionCells.length);
         
         // Hide unused text objects
         for (let i = textIndex; i < existingTexts.length; i++) {
