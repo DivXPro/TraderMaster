@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import type { BetData, Candle, PredictionCellData } from '@trader-master/shared';
+import type { BetData, Candle, PredictionCellData, MarketRoomConfig } from '@trader-master/shared';
 
 // Define PlayerData locally until shared package update propagates
 export interface PlayerData {
@@ -17,12 +17,14 @@ interface GameState {
   // Betting
   bets: BetData[];
   predictionCells: PredictionCellData[];
+  roomConfig: MarketRoomConfig | null;
   
   // User
   player: PlayerData | null;
   balance: number; // Keep balance for backward compatibility or ease of access, sync with player.balance
 
   // Actions
+  setRoomConfig: (config: MarketRoomConfig) => void;
   setMarketData: (data: Candle[]) => void;
   addCandle: (candle: Candle) => void;
   setBets: (bets: BetData[]) => void;
@@ -45,8 +47,11 @@ export const useGameStore = create<GameState>()(
     lastPrice: null,
     bets: [],
     predictionCells: [],
+    roomConfig: null,
     player: null,
     balance: 10000, // Default starting balance
+
+    setRoomConfig: (config) => set({ roomConfig: config }),
 
     setMarketData: (data) => set((state) => {
         const last = data.length > 0 ? data[data.length - 1] : null;

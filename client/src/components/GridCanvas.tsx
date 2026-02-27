@@ -3,7 +3,7 @@ import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import type { BetData as BetBox, PredictionCellData } from '@trader-master/shared';
 import { Application, Graphics, Text, TextStyle, Container, Rectangle } from 'pixi.js';
 import { bsCallPrice, bsPutPrice, RISK_FREE_RATE, VOLATILITY } from '../utils/pricing';
-import { PREDICTION_BET_LOCK_WINDOW } from '@trader-master/shared';
+import type { MarketRoomConfig } from '@trader-master/shared';
 
 const RECENT_SETTLEMENT_WINDOW = 20;
 
@@ -14,11 +14,12 @@ interface GridCanvasProps {
     predictionCells: PredictionCellData[];
     lastTime: number | null;
     lastPrice: number | null;
+    roomConfig: MarketRoomConfig | null;
     onCellClick?: (cellId: string) => void;
 }
 
 export const GridCanvas: React.FC<GridCanvasProps> = (props) => {
-    const { chart, series, bets, predictionCells, lastTime, lastPrice } = props;
+    const { chart, series, bets, predictionCells, lastTime, lastPrice, roomConfig } = props;
     const overlayRef = useRef<HTMLDivElement>(null);
     const appRef = useRef<Application | null>(null);
     const gridGraphicsRef = useRef<Graphics | null>(null);
@@ -361,7 +362,7 @@ export const GridCanvas: React.FC<GridCanvasProps> = (props) => {
             if (lastTime !== null) {
                 if (cell.startTime < lastTime) {
                     isPast = true;
-                } else if (cell.startTime <= lastTime + PREDICTION_BET_LOCK_WINDOW) {
+                } else if (cell.startTime <= lastTime + (roomConfig?.predictionBetLockWindow || 40)) {
                     isLocked = true;
                 }
             }
@@ -478,7 +479,7 @@ export const GridCanvas: React.FC<GridCanvasProps> = (props) => {
             existingTexts[i].visible = false;
         }
 
-    }, [pixiReady, chart, bets, predictionCells, series, lastTime, lastPrice]);
+    }, [pixiReady, chart, bets, predictionCells, series, lastTime, lastPrice, roomConfig]);
 
     useEffect(() => {
         drawCellGrid();

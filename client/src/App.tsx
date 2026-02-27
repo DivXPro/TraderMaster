@@ -2,19 +2,23 @@ import { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, UTCTimestamp, CandlestickData, LineData } from 'lightweight-charts';
 import * as Colyseus from '@colyseus/sdk';
-import { MarketState, MessageType, PREDICTION_DURATION, PREDICTION_PRICE_HEIGHT, PREDICTION_INITIAL_COLUMNS } from '@trader-master/shared';
-import type { Candle } from '@trader-master/shared';
+import { MarketState, MessageType } from '@trader-master/shared';
+import type { Candle, MarketRoomConfig } from '@trader-master/shared';
 import { GameOverlay } from './components/GameOverlay';
 import { useGameStore } from './store/useGameStore';
 import { syncRoomState } from './store/syncRoomState';
+import { getRoomMetadata } from './api/room';
 import './components/GameOverlay.css';
 import './App.css';
 
 // Initialize Colyseus Client
-const SCREEN_CELLS = 8;
 const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
 const host = window.location.host;
 const client = new Colyseus.Client(`${protocol}://${host}/api`);
+
+// Define RoomAvailable interface if not exported by SDK (it should be, but let's be safe or check imports)
+// Actually Colyseus SDK usually exports it. Let's check imports.
+// It seems getAvailableRooms might be generic or I need to cast client.
 
 function App() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -28,6 +32,8 @@ function App() {
 
   const bets = useGameStore((state) => state.bets);
   const balance = useGameStore((state) => state.balance);
+  const roomConfig = useGameStore((state) => state.roomConfig);
+  const setRoomConfig = useGameStore((state) => state.setRoomConfig);
 
   // Calculate stats
   const totalBets = bets.length;
@@ -62,6 +68,18 @@ function App() {
             return;
         }
         console.log("Joined room successfully!", r.sessionId);
+        
+        // Fetch room metadata explicitly after joining
+        fetch(`${protocol === 'wss' ? 'https' : 'http'}://${host}/api/room/${r.roomId}/metadata`)
+          .then(res => res.json())
+          .then(metadata => {
+              console.log("Fetched metadata via API:", metadata);
+              if (metadata && Object.keys(metadata).length > 0) {
+                  setRoomConfig(metadata as MarketRoomConfig);
+              }
+          })
+          .catch(err => console.error("Failed to fetch room metadata:", err));
+
         localStorage.setItem("reconnectionToken", r.reconnectionToken);
         setRoom(r);
       } catch (e) {
@@ -98,7 +116,7 @@ function App() {
 
   // Initialize Chart
   useEffect(() => {
-    if (!chartContainerRef.current) return;
+    if (!chartContainerRef.current || !roomConfig) return;
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
@@ -123,7 +141,7 @@ function App() {
         // Block Height: 379 / PREDICTION_LAYERS
         // Block Width (Time): PREDICTION_DURATION (30s)
         // BarSpacing: Block Height / PREDICTION_DURATION
-        barSpacing: ((500 - 26) * 0.8 / SCREEN_CELLS) / PREDICTION_DURATION, 
+        barSpacing: ((500 - 26) * 0.8 / (roomConfig.predictionLayers || 8)) / (roomConfig.predictionDuration || 30), 
         // Default right offset (empty space on the right in bars)
         // We calculate this dynamically below, but set a safe default
         rightOffset: 0, 
@@ -148,7 +166,7 @@ function App() {
         const res = original();
         if (res === null) return null;
 
-        const TARGET_VISUAL_RANGE = SCREEN_CELLS * PREDICTION_PRICE_HEIGHT; // blocks
+        const TARGET_VISUAL_RANGE = (roomConfig.predictionLayers || 8) * (roomConfig.predictionPriceHeight || 10); // blocks
         
         // Calculate center of the current data
         const center = (res.priceRange.minValue + res.priceRange.maxValue) / 2;
@@ -197,7 +215,7 @@ function App() {
     // Center offset: shift current time to the left/center to leave room for future
     // We want right side to accommodate PREDICTION_INITIAL_COLUMNS * PREDICTION_DURATION
     // rightOffset is in bars.
-    const desiredRightOffsetBars = PREDICTION_INITIAL_COLUMNS * PREDICTION_DURATION;
+    const desiredRightOffsetBars = (roomConfig.predictionInitialColumns || 20) * (roomConfig.predictionDuration || 30);
     
     // Apply options to set the right offset
     chart.applyOptions({
@@ -237,7 +255,7 @@ function App() {
         chart.applyOptions({ width: newWidth });
         
         // Keep the right offset consistent on resize
-        const desiredRightOffsetBars = PREDICTION_INITIAL_COLUMNS * PREDICTION_DURATION;
+        const desiredRightOffsetBars = (roomConfig.predictionInitialColumns || 20) * (roomConfig.predictionDuration || 30);
         chart.applyOptions({
             timeScale: {
                 rightOffset: desiredRightOffsetBars,
@@ -253,7 +271,7 @@ function App() {
       setSeriesApi(null);
       chart.remove();
     };
-  }, [chartMode]); // Re-create chart only when mode changes
+  }, [chartMode, roomConfig]); // Re-create chart when mode or config changes
 
   // Data Updates
   useEffect(() => {
@@ -353,7 +371,7 @@ function App() {
         // Colyseus doesn't have an explicit 'off' for messages in the same way, 
         // but re-registering overwrites or we can rely on component unmount.
     };
-  }, [seriesApi, chartMode, chartApi, room]);
+  }, [seriesApi, chartMode, chartApi, room, setRoomConfig]);
 
   return (
     <div className="app-container">
@@ -400,7 +418,12 @@ function App() {
         </div>
       </div>
 
-      <div className="chart-wrapper" ref={chartContainerRef}>
+      <div className="chart-wrapper" ref={chartContainerRef} style={{ position: 'relative', minHeight: '500px' }}>
+        {!roomConfig && (
+            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', color: '#888' }}>
+                Connecting to Market...
+            </div>
+        )}
         {chartApi && seriesApi && room && (
           <GameOverlay 
             chart={chartApi} 
@@ -408,6 +431,7 @@ function App() {
             room={room} 
             lastTime={marketData.length > 0 ? (marketData[marketData.length - 1].time as number) : null}
             lastPrice={marketData.length > 0 ? marketData[marketData.length - 1].close : null}
+            roomConfig={roomConfig}
           />
         )}
       </div>

@@ -30,6 +30,8 @@ export class MarketRoom extends Room {
             predictionBetLockWindow: options.predictionBetLockWindow || PREDICTION_BET_LOCK_WINDOW,
         };
 
+        this.setMetadata(this.options);
+
         this.state = new MarketState();
         // Initialize with placeholder, will be reset by Pyth
         this.market = new Market(100.0);

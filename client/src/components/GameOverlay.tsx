@@ -2,6 +2,7 @@ import React, { useCallback } from 'react';
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 import * as Colyseus from '@colyseus/sdk';
 import { MarketState, MessageType } from '@trader-master/shared';
+import type { MarketRoomConfig } from '@trader-master/shared';
 import { GridCanvas } from './GridCanvas';
 import { useGameStore } from '../store/useGameStore';
 
@@ -11,9 +12,10 @@ interface GameOverlayProps {
     room: Colyseus.Room<MarketState>;
     lastTime: number | null;
     lastPrice: number | null;
+    roomConfig: MarketRoomConfig | null;
 }
 
-export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, lastTime, lastPrice }) => {
+export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, lastTime, lastPrice, roomConfig }) => {
     const bets = useGameStore((state) => state.bets);
     const predictionCells = useGameStore((state) => state.predictionCells);
 
@@ -63,6 +65,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({ chart, series, room, l
                 predictionCells={predictionCells}
                 lastTime={lastTime}
                 lastPrice={lastPrice}
+                roomConfig={roomConfig}
                 onCellClick={handleCellClick}
             />
         </div>

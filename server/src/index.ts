@@ -22,6 +22,21 @@ const server = defineServer({
         app.use('/monitor', monitor());
         app.use('/playground', playground());
 
+        // API to get room metadata by roomId
+        app.get('/room/:roomId/metadata', async (req, res) => {
+            try {
+                // query matchmaker for room presence
+                const rooms = await matchMaker.query({ roomId: req.params.roomId });
+                if (rooms.length > 0) {
+                    res.json(rooms[0].metadata || {});
+                } else {
+                    res.status(404).json({ error: "Room not found" });
+                }
+            } catch (e: any) {
+                res.status(e.code || 500).json({ code: e.code, message: e.message });
+            }
+        });
+
         app.post('/matchmake/joinOrCreate/:roomName', async (req, res) => {
             try {
                 console.log(`[MatchMaker] joinOrCreate request for ${req.params.roomName}`);
