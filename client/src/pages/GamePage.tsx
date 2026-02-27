@@ -1,15 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi, UTCTimestamp, CandlestickData, LineData } from 'lightweight-charts';
 import * as Colyseus from '@colyseus/sdk';
 import { MarketState, MessageType } from '@trader-master/shared';
 import type { Candle } from '@trader-master/shared';
-import { GameOverlay } from '../components/GameOverlay';
+import { PixiChart } from '../components/PixiChart';
 import { useGameStore } from '../store/useGameStore';
 import { syncRoomState } from '../store/syncRoomState';
 import { getRoomMetadata } from '../api/room';
-import '../components/GameOverlay.css';
 import '../App.css';
 
 // Initialize Colyseus Client
@@ -23,9 +20,6 @@ export function GamePage() {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
   
-  const chartContainerRef = useRef<HTMLDivElement>(null);
-  const [chartApi, setChartApi] = useState<IChartApi | null>(null);
-  const [seriesApi, setSeriesApi] = useState<ISeriesApi<"Candlestick"> | ISeriesApi<"Line"> | null>(null);
   const [chartMode, setChartMode] = useState<'line' | 'candlestick'>('line');
   const [marketData, setMarketData] = useState<Candle[]>([]);
   const [room, setRoom] = useState<Colyseus.Room<MarketState> | null>(null);
@@ -34,6 +28,7 @@ export function GamePage() {
   const syncCleanupRef = useRef<(() => void) | null>(null);
 
   const bets = useGameStore((state) => state.bets);
+  const predictionCells = useGameStore((state) => state.predictionCells);
   const balance = useGameStore((state) => state.balance);
   const roomConfig = useGameStore((state) => state.roomConfig);
   const setRoomConfig = useGameStore((state) => state.setRoomConfig);
@@ -170,148 +165,45 @@ export function GamePage() {
     };
   }, [room]);
 
-  // Initialize Chart
-  useEffect(() => {
-    if (!chartContainerRef.current || !roomConfig) return;
+  // Handle Chart Clicks for Betting
+  const handleCellClick = useCallback((cellId: string) => {
+    if (!room) return;
 
-    const chart = createChart(chartContainerRef.current, {
-      layout: {
-        background: { type: ColorType.Solid, color: '#1E1E1E' },
-        textColor: '#DDD',
-      },
-      grid: {
-        vertLines: { color: '#2B2B43' },
-        horzLines: { color: '#2B2B43' },
-      },
-      width: chartContainerRef.current.clientWidth,
-      height: 500,
-      timeScale: {
-        timeVisible: true,
-        secondsVisible: true,
-        shiftVisibleRangeOnNewBar: true,
-        barSpacing: ((500 - 26) * 0.8 / (roomConfig.predictionLayers || 8)) / (roomConfig.predictionDuration || 30), 
-        rightOffset: 0, 
-      },
-      rightPriceScale: {
-        scaleMargins: {
-          top: 0.1,    // 10% margin at top
-          bottom: 0.1, // 10% margin at bottom
-        },
-        mode: 0, 
-        autoScale: true,
-      },
-    });
-    
-    const autoscaleStrategy = (original: () => any) => {
-        const res = original();
-        if (res === null) return null;
+    const currentCells = useGameStore.getState().predictionCells;
+    const clickedCell = currentCells.find(c => c.id === cellId);
 
-        const priceHeight = roomConfig.predictionPriceHeight || 1;
-        const visibleLayers = roomConfig.predictionLayers || 8;
-        const currentPrice = lastPriceRef.current;
-        
-        // Calculate visible price range based on predictionLayers
-        // Total visible height = layers * priceHeight
-        const visibleRange = visibleLayers * priceHeight;
-        
-        let minValue = res.priceRange.minValue;
-        let maxValue = res.priceRange.maxValue;
+    if (!clickedCell) return;
 
-        if (currentPrice !== null && currentPrice > 0) {
-            // Center around current price
-            minValue = Math.max(0, currentPrice - visibleRange / 2);
-            maxValue = minValue + visibleRange;
-        }
+    const currentBets = useGameStore.getState().bets;
+    const existingBet = currentBets.find(b => b.cellId === clickedCell.id && b.ownerId === room.sessionId);
 
-        return {
-            priceRange: {
-                minValue: minValue,
-                maxValue: maxValue,
-            },
-            margins: res.margins,
-        };
-    };
-
-    let series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
-
-    if (chartMode === 'candlestick') {
-      series = chart.addSeries(CandlestickSeries, {
-        upColor: '#26a69a',
-        downColor: '#ef5350',
-        borderVisible: false,
-        wickUpColor: '#26a69a',
-        wickDownColor: '#ef5350',
-        autoscaleInfoProvider: autoscaleStrategy,
-      });
-    } else {
-      series = chart.addSeries(LineSeries, {
-        color: '#2962FF',
-        lineWidth: 2,
-        autoscaleInfoProvider: autoscaleStrategy,
-      });
+    if (existingBet) {
+        alert("You have already placed a bet on this cell!");
+        return;
     }
 
-    setChartApi(chart);
-    setSeriesApi(series);
-    
-    const desiredRightOffsetBars = (roomConfig.predictionInitialColumns || 20) * (roomConfig.predictionDuration || 30);
-    
-    chart.applyOptions({
-        timeScale: {
-            rightOffset: desiredRightOffsetBars,
-        }
-    });
+    const betAmount = 100;
 
-    // Initial Data Load
-    if (marketData.length > 0) {
-      const uniqueData = new Map();
-      marketData.forEach(item => uniqueData.set(item.time, item));
-      const sortedData = Array.from(uniqueData.values()).sort((a, b) => a.time - b.time);
-
-      if (chartMode === 'candlestick') {
-        const data: CandlestickData[] = sortedData.map(item => ({
-          time: item.time as UTCTimestamp,
-          open: item.open,
-          high: item.high,
-          low: item.low,
-          close: item.close
-        }));
-        (series as ISeriesApi<"Candlestick">).setData(data);
-      } else {
-        const data: LineData[] = sortedData.map(item => ({
-          time: item.time as UTCTimestamp,
-          value: item.close,
-        }));
-        (series as ISeriesApi<"Line">).setData(data);
-      }
+    const currentBalance = useGameStore.getState().balance;
+    if (currentBalance < betAmount) {
+        alert("Insufficient balance!");
+        return;
     }
 
-    const handleResize = () => {
-      if (chartContainerRef.current) {
-        const newWidth = chartContainerRef.current.clientWidth;
-        chart.applyOptions({ width: newWidth });
-        
-        const desiredRightOffsetBars = (roomConfig.predictionInitialColumns || 20) * (roomConfig.predictionDuration || 30);
-        chart.applyOptions({
-            timeScale: {
-                rightOffset: desiredRightOffsetBars,
-            }
-        });
-      }
+    // Place Bet
+    const bet = {
+        cellId: clickedCell.id,
+        amount: betAmount, // Default amount
+        currency: 'USD'
     };
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      setChartApi(null);
-      setSeriesApi(null);
-      chart.remove();
-    };
-  }, [chartMode, roomConfig]); 
+    console.log('Placing bet on cell:', clickedCell.id, bet);
+    // Emit event to server
+    room.send(MessageType.PLACE_BET, bet);
+  }, [room]);
 
   // Data Updates
   useEffect(() => {
-    if (!seriesApi || !room) return;
+    if (!room) return;
 
     const handleHistory = (data: Candle[]) => {
       const sortedData = data.sort((a, b) => a.time - b.time);
@@ -320,23 +212,6 @@ export function GamePage() {
       if (sortedData.length > 0) {
         lastCandleTimeRef.current = sortedData[sortedData.length - 1].time;
         lastPriceRef.current = sortedData[sortedData.length - 1].close;
-      }
-
-      if (chartMode === 'candlestick') {
-        const chartData: CandlestickData[] = sortedData.map(item => ({
-          time: item.time as UTCTimestamp,
-          open: item.open,
-          high: item.high,
-          low: item.low,
-          close: item.close
-        }));
-        (seriesApi as ISeriesApi<"Candlestick">).setData(chartData);
-      } else {
-        const chartData: LineData[] = sortedData.map(item => ({
-          time: item.time as UTCTimestamp,
-          value: item.close,
-        }));
-        (seriesApi as ISeriesApi<"Line">).setData(chartData);
       }
     };
 
@@ -358,23 +233,6 @@ export function GamePage() {
         }
         return [...prev, data];
       });
-      
-      if (chartMode === 'candlestick') {
-        const chartItem: CandlestickData = {
-          time: data.time as UTCTimestamp,
-          open: data.open,
-          high: data.high,
-          low: data.low,
-          close: data.close
-        };
-        (seriesApi as ISeriesApi<"Candlestick">).update(chartItem);
-      } else {
-        const chartItem: LineData = {
-          time: data.time as UTCTimestamp,
-          value: data.close,
-        };
-        (seriesApi as ISeriesApi<"Line">).update(chartItem);
-      }
     };
 
     const handleBetResult = (data: any) => {
@@ -404,7 +262,8 @@ export function GamePage() {
 
     return () => {
     };
-  }, [seriesApi, chartMode, chartApi, room, setRoomConfig]);
+  }, [room, setRoomConfig]);
+
 
   return (
     <div className="app-container">
@@ -456,16 +315,18 @@ export function GamePage() {
         </div>
       </div>
 
-      <div className="chart-wrapper" ref={chartContainerRef} style={{ position: 'relative', minHeight: '500px' }}>
-        {chartApi && seriesApi && room && (
-          <GameOverlay 
-            chart={chartApi} 
-            series={seriesApi}
-            room={room} 
-            lastTime={marketData.length > 0 ? (marketData[marketData.length - 1].time as number) : null}
-            lastPrice={marketData.length > 0 ? marketData[marketData.length - 1].close : null}
-            roomConfig={roomConfig}
-          />
+      <div className="chart-wrapper" style={{ position: 'relative', height: '500px', width: '100%' }}>
+        {room && (
+            <PixiChart
+                data={marketData}
+                bets={bets}
+                predictionCells={predictionCells}
+                chartMode={chartMode}
+                roomConfig={roomConfig}
+                lastTime={marketData.length > 0 ? (marketData[marketData.length - 1].time as number) : null}
+                lastPrice={marketData.length > 0 ? marketData[marketData.length - 1].close : null}
+                onCellClick={handleCellClick}
+            />
         )}
       </div>
     </div>
