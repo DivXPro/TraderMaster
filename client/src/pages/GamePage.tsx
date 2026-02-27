@@ -115,6 +115,58 @@ export function GamePage() {
 
         if (currentRoom) {
             console.log("Joined room successfully!", currentRoom.sessionId);
+
+            // Register Message Handlers immediately to avoid missing initial history
+            currentRoom.onMessage(MessageType.HISTORY, (data: Candle[]) => {
+                const sortedData = data.sort((a, b) => a.time - b.time);
+                setMarketData(sortedData);
+                
+                if (sortedData.length > 0) {
+                    lastCandleTimeRef.current = sortedData[sortedData.length - 1].time;
+                    lastPriceRef.current = sortedData[sortedData.length - 1].close;
+                }
+            });
+
+            currentRoom.onMessage(MessageType.PRICE, (data: Candle) => {
+                if (data.time < lastCandleTimeRef.current) {
+                    console.warn('Received out-of-order data, ignoring:', data);
+                    return;
+                }
+                
+                lastCandleTimeRef.current = data.time;
+                lastPriceRef.current = data.close;
+
+                setMarketData(prev => {
+                    const last = prev[prev.length - 1];
+                    if (last && last.time === data.time) {
+                        const updated = [...prev];
+                        updated[prev.length - 1] = data;
+                        return updated;
+                    }
+                    return [...prev, data];
+                });
+            });
+
+            currentRoom.onMessage(MessageType.BET_RESULT, (data: any) => {
+                const store = useGameStore.getState();
+                const betsArray = Array.isArray(data.bets)
+                    ? data.bets
+                    : data.bet
+                    ? [data.bet]
+                    : [];
+
+                betsArray.forEach((betData: any) => {
+                    store.updateBet(betData);
+
+                    if (betData.ownerId === currentRoom!.sessionId && betData.cellId) {
+                        store.updatePredictionCellStatus(betData.cellId, betData.status);
+                    }
+                });
+
+                if (typeof data.balance === "number") {
+                    store.setBalance(data.balance);
+                }
+            });
             
             // Fetch room metadata explicitly after joining
             getRoomMetadata(currentRoom.roomId).then(metadata => {
@@ -201,68 +253,7 @@ export function GamePage() {
     room.send(MessageType.PLACE_BET, bet);
   }, [room]);
 
-  // Data Updates
-  useEffect(() => {
-    if (!room) return;
 
-    const handleHistory = (data: Candle[]) => {
-      const sortedData = data.sort((a, b) => a.time - b.time);
-      setMarketData(sortedData);
-      
-      if (sortedData.length > 0) {
-        lastCandleTimeRef.current = sortedData[sortedData.length - 1].time;
-        lastPriceRef.current = sortedData[sortedData.length - 1].close;
-      }
-    };
-
-    const handlePrice = (data: Candle) => {
-      if (data.time < lastCandleTimeRef.current) {
-        console.warn('Received out-of-order data, ignoring:', data);
-        return;
-      }
-      
-      lastCandleTimeRef.current = data.time;
-      lastPriceRef.current = data.close;
-
-      setMarketData(prev => {
-        const last = prev[prev.length - 1];
-        if (last && last.time === data.time) {
-            const updated = [...prev];
-            updated[prev.length - 1] = data;
-            return updated;
-        }
-        return [...prev, data];
-      });
-    };
-
-    const handleBetResult = (data: any) => {
-      const store = useGameStore.getState();
-      const betsArray = Array.isArray(data.bets)
-        ? data.bets
-        : data.bet
-        ? [data.bet]
-        : [];
-
-      betsArray.forEach((betData: any) => {
-        store.updateBet(betData);
-
-        if (betData.ownerId === room.sessionId && betData.cellId) {
-          store.updatePredictionCellStatus(betData.cellId, betData.status);
-        }
-      });
-
-      if (typeof data.balance === "number") {
-        store.setBalance(data.balance);
-      }
-    };
-
-    room.onMessage(MessageType.HISTORY, handleHistory);
-    room.onMessage(MessageType.PRICE, handlePrice);
-    room.onMessage(MessageType.BET_RESULT, handleBetResult);
-
-    return () => {
-    };
-  }, [room, setRoomConfig]);
 
 
   return (
