@@ -12,5 +12,10 @@
     "dev": "pnpm --filter server dev & pnpm --filter client dev",
     "build": "pnpm -r build",
     "start": "pnpm --filter server start"
+  },
+  "devDependencies": {
+    "@colyseus/sdk": "^0.17.31",
+    "puppeteer": "^24.37.5",
+    "ws": "^8.19.0"
   }
 }

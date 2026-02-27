@@ -1,9 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
-import type { BetData as BetBox, PredictionCellData } from '@trader-master/shared';
+import type { BetData as BetBox, PredictionCellData, MarketRoomConfig } from '@trader-master/shared';
 import { Application, Graphics, Text, TextStyle, Container, Rectangle } from 'pixi.js';
 import { bsCallPrice, bsPutPrice, RISK_FREE_RATE, VOLATILITY } from '../utils/pricing';
-import type { MarketRoomConfig } from '@trader-master/shared';
 
 const RECENT_SETTLEMENT_WINDOW = 20;
 
@@ -200,8 +199,16 @@ export const GridCanvas: React.FC<GridCanvasProps> = (props) => {
         if (!overlay) return;
 
         // Get chart dimensions including scales
-        const priceScaleWidth = chart.priceScale('right').width();
-        const timeScaleHeight = chart.timeScale().height();
+        let priceScaleWidth = 0;
+        let timeScaleHeight = 0;
+        
+        try {
+            priceScaleWidth = chart.priceScale('right').width();
+            timeScaleHeight = chart.timeScale().height();
+        } catch (e) {
+            console.warn("Failed to get chart scale dimensions:", e);
+            return;
+        }
 
         // Resize canvas to match overlay but exclude scales
         // We assume overlay is 100% width/height of the container

@@ -5,6 +5,7 @@ import { playground } from "@colyseus/playground";
 import { Encoder } from "@colyseus/schema";
 import cors from 'cors';
 import { MarketRoom } from './rooms/MarketRoom';
+import { roomTemplates } from './config/roomTemplates';
 
 // Increase Colyseus Schema buffer size to handle large state (e.g. many prediction cells)
 Encoder.BUFFER_SIZE = 1024 * 1024; // 1 MB
@@ -37,42 +38,29 @@ const server = defineServer({
             }
         });
 
-        app.post('/matchmake/joinOrCreate/:roomName', async (req, res) => {
+        // Custom room listing API
+        app.get('/rooms/:roomName', async (req, res) => {
             try {
-                console.log(`[MatchMaker] joinOrCreate request for ${req.params.roomName}`);
-                const seat = await matchMaker.joinOrCreate(req.params.roomName, req.body || {});
-                console.log(`[MatchMaker] seat reserved:`, JSON.stringify(seat));
-                res.json(seat);
-            } catch (e: any) {
-                console.error(`[MatchMaker] error:`, e);
-                res.status(e.code || 500).json({ code: e.code, message: e.message });
-            }
-        });
-
-        app.post('/matchmake/join/:roomName', async (req, res) => {
-            try {
-                const seat = await matchMaker.join(req.params.roomName, req.body || {});
-                res.json(seat);
+                const rooms = await matchMaker.query({ name: req.params.roomName });
+                const result = rooms.map((r: any) => ({
+                    roomId: r.roomId,
+                    clients: r.clients,
+                    maxClients: r.maxClients,
+                    metadata: r.metadata || {}
+                }));
+                res.json(result);
             } catch (e: any) {
                 res.status(e.code || 500).json({ code: e.code, message: e.message });
             }
         });
 
-        app.post('/matchmake/joinById/:roomId', async (req, res) => {
+        // Debug API to inspect rooms
+        app.get('/debug/rooms', async (req, res) => {
             try {
-                const seat = await matchMaker.joinById(req.params.roomId, req.body || {});
-                res.json(seat);
+                const rooms = await matchMaker.query({});
+                res.json(rooms);
             } catch (e: any) {
-                res.status(e.code || 500).json({ code: e.code, message: e.message });
-            }
-        });
-
-        app.post('/matchmake/create/:roomName', async (req, res) => {
-            try {
-                const seat = await matchMaker.create(req.params.roomName, req.body || {});
-                res.json(seat);
-            } catch (e: any) {
-                res.status(e.code || 500).json({ code: e.code, message: e.message });
+                res.status(500).json({ error: e.message });
             }
         });
     },
@@ -83,7 +71,23 @@ const server = defineServer({
 
 
 
-
-server.listen(port).then(() => {
+server.listen(port).then(async () => {
     console.log(`Listening on ws://localhost:${port}`);
+    try {
+        // Create rooms based on templates
+        const defaultRoom = 'market';
+        const template = roomTemplates['default'];
+        
+        const existing = await matchMaker.query({ name: defaultRoom });
+        if (existing.length === 0) {
+            console.log(`Creating default room: ${defaultRoom} with template:`, template);
+            await matchMaker.create(defaultRoom, {
+                ...template,
+                // Do not pass 'roomName' in options as it is reserved
+            });
+            console.log('Created default market room.');
+        }
+    } catch (e) {
+        console.error('Failed to ensure default room:', e);
+    }
 });

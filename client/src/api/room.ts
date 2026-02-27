@@ -1,4 +1,10 @@
 import type { MarketRoomConfig } from "@trader-master/shared";
+export interface RoomListing {
+    roomId: string;
+    clients: number;
+    maxClients: number;
+    metadata: any;
+}
 
 const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
 const host = window.location.host;
@@ -15,5 +21,19 @@ export const getRoomMetadata = async (roomId: string): Promise<MarketRoomConfig 
     } catch (error) {
         console.error("Error fetching room metadata:", error);
         return null;
+    }
+};
+
+export const getAvailableRooms = async (roomName: string): Promise<RoomListing[]> => {
+    try {
+        const response = await fetch(`${API_BASE_URL}/rooms/${roomName}`);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch rooms: ${response.statusText}`);
+        }
+        const rooms = await response.json();
+        return rooms as RoomListing[];
+    } catch (error) {
+        console.error("Error fetching available rooms:", error);
+        return [];
     }
 };

@@ -16,11 +16,12 @@ export class MarketRoom extends Room {
 
     onCreate(options: MarketRoomOptions) {
         console.log("MarketRoom created", options);
-        this.roomName = options.roomName;
+        // this.roomName is already set by Colyseus (e.g. "market")
+        // If we want to override it with a custom name, we should use a different property like 'displayName'
         
         // Initialize options with defaults from shared constants
         this.options = {
-            roomName: options.roomName,
+            roomName: options.roomName || this.roomName,
             symbol: options.symbol,
             predictionDuration: options.predictionDuration || PREDICTION_DURATION,
             predictionPriceHeight: options.predictionPriceHeight || PREDICTION_PRICE_HEIGHT,
@@ -29,6 +30,7 @@ export class MarketRoom extends Room {
             predictionInitialColumns: options.predictionInitialColumns || PREDICTION_INITIAL_COLUMNS,
             predictionBetLockWindow: options.predictionBetLockWindow || PREDICTION_BET_LOCK_WINDOW,
         };
+        this.autoDispose = false;
 
         this.setMetadata(this.options);
 
@@ -59,6 +61,11 @@ export class MarketRoom extends Room {
         });
         this.pyth.start();
 
+        // Dummy initialization for debugging
+        // this.initialized = true;
+        // this.market = new Market(100.0);
+        // console.log("Dummy Market initialized");
+
         this.onMessage<PlaceBetPayload>(MessageType.PLACE_BET, (client, data) => this.handlePlaceBet(client, data));
 
         // 1 second tick
@@ -66,6 +73,8 @@ export class MarketRoom extends Room {
     }
 
     onDispose() {
+        console.log("MarketRoom dispose", this.roomName);
+
         if (this.pyth) {
             this.pyth.stop();
         }
@@ -139,6 +148,11 @@ export class MarketRoom extends Room {
         client.send(MessageType.BET_PLACED, { id: bet.id, odds: cell.odds, cellId: cell.id });
     }
 
+    onAuth(client: Client, options: any, request: any) {
+        console.log("onAuth called for client:", client.sessionId, "Options:", options);
+        return true;
+    }
+
     onJoin(client: Client, options: any) {
         console.log("Client joined:", client.sessionId);
         
@@ -177,17 +191,27 @@ export class MarketRoom extends Room {
             }
 
             // Allow reconnection for 60 seconds
-            await this.allowReconnection(client, 60);
+            const newClient = await this.allowReconnection(client, 60);
 
             // Client returned!
             if (player) {
                 player.connected = true;
-                console.log("Client reconnected:", client.sessionId);
+                console.log("Client reconnected. Old SID:", client.sessionId, "New SID:", newClient.sessionId);
+
+                // Handle session ID change: Update player mapping in state
+                if (newClient.sessionId !== client.sessionId) {
+                    this.state.players.delete(client.sessionId);
+                    this.state.players.set(newClient.sessionId, player);
+                    player.id = newClient.sessionId;
+                    console.log("Migrated player to new sessionId:", newClient.sessionId);
+                }
             }
         } catch (e) {
-             // Timeout or consented leave
-             console.log("Client remove (timeout or consented):", client.sessionId);
-             this.state.players.delete(client.sessionId);
+            // timeout or consented leave
+            if (player) {
+                this.state.players.delete(client.sessionId);
+                console.log("Player removed after timeout/leave:", client.sessionId);
+            }
         }
     }
 
@@ -273,11 +297,14 @@ export class MarketRoom extends Room {
     private generatePredictionCells(currentPrice: number, currentTime: number) {
         const endTime = currentTime + this.options.predictionDuration;
         const timeToMaturity = this.options.predictionDuration / 31536000; // in years
-        const basePrice = Math.floor(currentPrice / this.options.predictionPriceHeight) * this.options.predictionPriceHeight;
+        const step = this.options.predictionPriceHeight;
+        const targetMaxExclusive = Math.max(0, currentPrice * 2) + step;
+        const layersNeeded = Math.ceil(targetMaxExclusive / step);
+        const layersCount = Math.max(this.options.predictionLayers, layersNeeded);
 
-        for (let i = 0; i < this.options.predictionLayers; i ++) {
-            const low = basePrice + ((this.options.predictionLayers / 2) - i) * this.options.predictionPriceHeight;
-            const high = low + this.options.predictionPriceHeight;
+        for (let i = 0; i < layersCount; i++) {
+            const low = i * step;
+            const high = low + step;
             this.createPredictionCell(low, high, currentTime, endTime, timeToMaturity);
         }
     }
