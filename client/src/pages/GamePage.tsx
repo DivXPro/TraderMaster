@@ -206,16 +206,27 @@ export function GamePage() {
         const res = original();
         if (res === null) return null;
 
-        const step = roomConfig.predictionPriceHeight || 1;
+        const priceHeight = roomConfig.predictionPriceHeight || 1;
+        const visibleLayers = roomConfig.predictionLayers || 8;
         const currentPrice = lastPriceRef.current;
-        const targetMax = currentPrice !== null && currentPrice > 0
-          ? currentPrice * 2 + step
-          : res.priceRange.maxValue;
+        
+        // Calculate visible price range based on predictionLayers
+        // Total visible height = layers * priceHeight
+        const visibleRange = visibleLayers * priceHeight;
+        
+        let minValue = res.priceRange.minValue;
+        let maxValue = res.priceRange.maxValue;
+
+        if (currentPrice !== null && currentPrice > 0) {
+            // Center around current price
+            minValue = Math.max(0, currentPrice - visibleRange / 2);
+            maxValue = minValue + visibleRange;
+        }
 
         return {
             priceRange: {
-                minValue: 0,
-                maxValue: Math.max(res.priceRange.maxValue, targetMax),
+                minValue: minValue,
+                maxValue: maxValue,
             },
             margins: res.margins,
         };
