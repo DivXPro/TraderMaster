@@ -8,7 +8,7 @@ import { MarketRoom } from './rooms/MarketRoom';
 import { roomTemplates } from './config/roomTemplates';
 
 // Increase Colyseus Schema buffer size to handle large state (e.g. many prediction cells)
-Encoder.BUFFER_SIZE = 1024 * 1024; // 1 MB
+Encoder.BUFFER_SIZE = 4096 * 1024; // 4 MB
 
 const port = Number(process.env.PORT || 3000);
 

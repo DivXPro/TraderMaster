@@ -170,6 +170,8 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
         isDraggingTime: false
     });
 
+    const hoverRef = useRef<{ cellId: string | null }>({ cellId: null });
+
     // Pixi Containers & Graphics
     const refs = useRef<{
         mainContainer: Container | null;
@@ -518,6 +520,43 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
                     lastX = e.global.x;
                     lastY = e.global.y;
                 }
+
+                if (
+                    !interactionRef.current.isDraggingPrice &&
+                    !interactionRef.current.isDraggingTime &&
+                    !interactionRef.current.isDraggingChart
+                ) {
+                    const mouseX = e.global.x;
+                    const mouseY = e.global.y;
+                    const chartWidth = app.screen.width - 50;
+                    const chartHeight = app.screen.height - 30;
+
+                    let hoveredCellId: string | null = null;
+                    let hoveredBettable = false;
+
+                    if (mouseX >= 0 && mouseX <= chartWidth && mouseY >= 0 && mouseY <= chartHeight) {
+                        const t = xToTime(mouseX);
+                        const p = yToPrice(mouseY);
+
+                        const currentData = dataRef.current.data;
+                        const lastDataTime = currentData.length > 0 ? currentData[currentData.length - 1].time : 0;
+
+                        const hoveredCell = dataRef.current.predictionCells.find(c =>
+                            t >= c.startTime && t <= c.endTime &&
+                            p >= c.lowPrice && p <= c.highPrice
+                        );
+
+                        if (hoveredCell) {
+                            hoveredCellId = hoveredCell.id;
+                            const isFuture = hoveredCell.startTime > lastDataTime;
+                            const hasBet = dataRef.current.bets.some(b => b.cellId === hoveredCell.id);
+                            hoveredBettable = isFuture && !hasBet;
+                        }
+                    }
+
+                    hoverRef.current.cellId = hoveredCellId;
+                    mainContainer.cursor = hoveredBettable ? 'pointer' : 'crosshair';
+                }
             });
 
             const onDragEnd = () => {
@@ -630,9 +669,14 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
                 p >= c.lowPrice && p <= c.highPrice
             );
             
-            if (clickedCell && handlersRef.current.onCellClick) {
-                handlersRef.current.onCellClick(clickedCell.id);
-            }
+            if (!clickedCell || !handlersRef.current.onCellClick) return;
+
+            const currentData = dataRef.current.data;
+            const lastDataTime = currentData.length > 0 ? currentData[currentData.length - 1].time : 0;
+            const isFuture = clickedCell.startTime > lastDataTime;
+            const hasBet = dataRef.current.bets.some(b => b.cellId === clickedCell.id);
+
+            if (isFuture && !hasBet) handlersRef.current.onCellClick(clickedCell.id);
         };
         
         // We already added a pointerdown for dragging in initPixi.
@@ -970,7 +1014,9 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
 
             // Check if active (current prediction column)
             // Using data time might lag slightly behind real time, but consistent with chart
-            const isActive = cell.startTime <= lastDataTime && cell.endTime > lastDataTime;
+            // const isActive = cell.startTime <= lastDataTime && cell.endTime > lastDataTime; // Unused as we removed special styling for active cells
+            const isFuture = cell.startTime > lastDataTime;
+            const isHovered = hoverRef.current.cellId === cell.id;
 
             if (bet) {
                 if (bet.status === 'won') {
@@ -995,13 +1041,15 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
                     strokeColor = 0x2ECC71;
                     strokeAlpha = 1;
                     strokeWidth = 2;
-                } else if (isActive) {
-                    // Active column (no bet)
-                    // Slightly lighter background to indicate active area
-                    color = 0x4A4A4A;
-                    alpha = 0.3;
-                    strokeColor = 0x666666;
                 }
+            }
+
+            if (!bet && isFuture && isHovered) {
+                color = 0x5A5A5A;
+                alpha = 0.72;
+                strokeColor = 0x5A5A5A;
+                strokeAlpha = 0.9;
+                strokeWidth = 1;
             }
             
             cells.rect(x1, ry, w, h);
