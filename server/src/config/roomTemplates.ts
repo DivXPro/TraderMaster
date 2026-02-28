@@ -10,12 +10,13 @@ export const roomTemplates: Record<string, RoomTemplate> = {
         predictionDuration: PREDICTION_DURATION,
         predictionPriceHeight: 10,
         predictionLayers: 6, // Optimized for performance (was 12)
-        predictionInitialColumns: 8, // Optimized for performance (was 16)
+        predictionInitialColumns: 24, // Optimized for performance (was 16)
     },
     'btc': {
         symbol: 'BTCUSD',
         predictionDuration: 60,
         predictionPriceHeight: 100,
-        predictionLayers: 8
+        predictionLayers: 6,
+        predictionInitialColumns: 24, // Optimized for performance (was 16)
     }
 };

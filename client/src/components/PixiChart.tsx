@@ -163,6 +163,13 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
     const dataRef = useRef({ predictionCells, bets, data, chartMode });
     dataRef.current = { predictionCells, bets, data, chartMode };
 
+    // Interaction state for sharing between initPixi and draw loop
+    const interactionRef = useRef({
+        isDraggingChart: false,
+        isDraggingPrice: false,
+        isDraggingTime: false
+    });
+
     // Pixi Containers & Graphics
     const refs = useRef<{
         mainContainer: Container | null;
@@ -432,9 +439,6 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
             mainContainer.cursor = 'crosshair';
 
             // State
-            let isDraggingChart = false;
-            let isDraggingPrice = false;
-            let isDraggingTime = false;
             let lastX = 0;
             let lastY = 0;
 
@@ -442,7 +446,7 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
 
             // 1. Price Axis Interaction
             priceAxisHitArea.on('pointerdown', (e) => {
-                isDraggingPrice = true;
+                interactionRef.current.isDraggingPrice = true;
                 lastY = e.global.y;
                 viewportRef.current.autoScaleY = false; // Disable auto-scale on manual interaction
                 e.stopPropagation();
@@ -450,14 +454,14 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
 
             // 2. Time Axis Interaction
             timeAxisHitArea.on('pointerdown', (e) => {
-                isDraggingTime = true;
+                interactionRef.current.isDraggingTime = true;
                 lastX = e.global.x;
                 e.stopPropagation();
             });
 
             // 3. Chart Area Interaction
             mainContainer.on('pointerdown', (e) => {
-                isDraggingChart = true;
+                interactionRef.current.isDraggingChart = true;
                 lastX = e.global.x;
                 lastY = e.global.y;
                 mainContainer.cursor = 'grabbing';
@@ -468,7 +472,7 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
 
             // Global Move
             app.stage.on('pointermove', (e) => {
-                if (isDraggingPrice) {
+                if (interactionRef.current.isDraggingPrice) {
                     const dy = e.global.y - lastY;
                     const sensitivity = 0.002;
                     const scaleFactor = Math.exp(-dy * sensitivity);
@@ -484,7 +488,7 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
                     
                     lastY = e.global.y;
                 } 
-                else if (isDraggingTime) {
+                else if (interactionRef.current.isDraggingTime) {
                     const dx = e.global.x - lastX;
                     const sensitivity = 0.002;
                     const scaleFactor = Math.exp(dx * sensitivity);
@@ -500,7 +504,7 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
 
                     lastX = e.global.x;
                 } 
-                else if (isDraggingChart) {
+                else if (interactionRef.current.isDraggingChart) {
                     const dx = e.global.x - lastX;
                     const dy = e.global.y - lastY;
                     
@@ -517,13 +521,13 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
             });
 
             const onDragEnd = () => {
-                if (isDraggingChart) {
+                if (interactionRef.current.isDraggingChart) {
                     // Check for click? 
                     // If movement was small, treat as click
                 }
-                isDraggingChart = false;
-                isDraggingPrice = false;
-                isDraggingTime = false;
+                interactionRef.current.isDraggingChart = false;
+                interactionRef.current.isDraggingPrice = false;
+                interactionRef.current.isDraggingTime = false;
                 mainContainer.cursor = 'crosshair';
             };
 
@@ -653,6 +657,24 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
         // Define chart area (exclude axes)
         const chartWidth = width - 50;
         const chartHeight = height - 30;
+
+        // Auto-center Latest Candle if not dragging
+        // This creates the "scrolling left" effect as new data comes in
+        if (!interactionRef.current.isDraggingChart && !interactionRef.current.isDraggingTime && data.length > 0) {
+            const lastTime = data[data.length - 1].time;
+            // Center the latest candle horizontally
+            const targetX = chartWidth * 0.5;
+            const targetOffsetX = targetX - lastTime * viewportRef.current.scaleX;
+            
+            // Smoothly interpolate to target offset (0.1 factor for smooth camera follow)
+            // If the difference is very small, snap to it to avoid jitter
+            const diff = targetOffsetX - viewportRef.current.offsetX;
+            if (Math.abs(diff) > 0.1) {
+                viewportRef.current.offsetX += diff * 0.1;
+            } else {
+                viewportRef.current.offsetX = targetOffsetX;
+            }
+        }
 
         // Update Hit Areas
         r.priceAxisHitArea?.clear();
@@ -886,6 +908,12 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
         const betsMap = new Map();
         bets.forEach(b => { if(b.cellId) betsMap.set(b.cellId, b); });
 
+        // Build a map of endTimes to close prices for quick lookup
+        // We need the price exactly AT or just BEFORE the cell's endTime
+        // Assuming data is sorted by time
+        const timeToClose = new Map<number, number>();
+        visibleData.forEach(d => timeToClose.set(d.time, d.close));
+
         predictionCells.forEach(cell => {
             const x1 = timeToX(cell.startTime);
             const x2 = timeToX(cell.endTime);
@@ -901,18 +929,84 @@ export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
             
             let color = 0x3C3C3C;
             let alpha = 0.5;
+            let strokeColor = 0x3C3C3C;
+            let strokeAlpha = 0.8;
+            let strokeWidth = 1;
+
             const bet = betsMap.get(cell.id);
             
+            // Check if this cell is a "winning" cell (price ended up here)
+            // Even if no bet was placed
+            let isWinningCell = false;
+            // Only check if cell is expired
+            const lastDataTime = data.length > 0 ? data[data.length - 1].time : 0;
+            
+            if (cell.endTime <= lastDataTime) {
+                 // Find close price at cell.endTime
+                 // Exact match first
+                 let closePrice = timeToClose.get(cell.endTime);
+                 if (closePrice === undefined) {
+                     // Fallback: find candle with time <= cell.endTime
+                     // Since visibleData might be sparse or not match exactly?
+                     // Actually, we should look in 'data' if not in visibleData, but that's slow.
+                     // Let's assume visibleData covers it if the cell is visible.
+                     // If not found, maybe just skip (data gap).
+                     // Or linear search in visibleData
+                     // Find the latest candle before or at endTime
+                     for (let i = visibleData.length - 1; i >= 0; i--) {
+                         if (visibleData[i].time <= cell.endTime) {
+                             closePrice = visibleData[i].close;
+                             break;
+                         }
+                     }
+                 }
+                 
+                 if (closePrice !== undefined) {
+                     if (closePrice >= cell.lowPrice && closePrice < cell.highPrice) {
+                         isWinningCell = true;
+                     }
+                 }
+            }
+
+            // Check if active (current prediction column)
+            // Using data time might lag slightly behind real time, but consistent with chart
+            const isActive = cell.startTime <= lastDataTime && cell.endTime > lastDataTime;
+
             if (bet) {
-                if (bet.status === 'won') color = 0x2ECC71;
-                else if (bet.status === 'lost') color = 0xE74C3C;
-                else color = 0xFFD700;
-                alpha = 0.3;
+                if (bet.status === 'won') {
+                    color = 0x2ECC71; // Green
+                    alpha = 0.4;
+                } else if (bet.status === 'lost') {
+                    color = 0xE74C3C; // Red
+                    alpha = 0.4;
+                } else {
+                    color = 0xFFD700; // Gold (Pending)
+                    alpha = 0.4;
+                }
+                // Ensure stroke matches fill for bets
+                strokeColor = color;
+                strokeAlpha = 0.8;
+                strokeWidth = 1;
+            } else {
+                if (isWinningCell) {
+                    // Highlight winning cell without bet
+                    color = 0x2ECC71; // Green
+                    alpha = 0.15; // Lower alpha to distinguish from bet
+                    strokeColor = 0x2ECC71;
+                    strokeAlpha = 1;
+                    strokeWidth = 2;
+                } else if (isActive) {
+                    // Active column (no bet)
+                    // Slightly lighter background to indicate active area
+                    color = 0x4A4A4A;
+                    alpha = 0.3;
+                    strokeColor = 0x666666;
+                }
             }
             
             cells.rect(x1, ry, w, h);
             cells.fill({ color, alpha });
-            cells.stroke({ color, width: 1, alpha: 0.8 });
+            cells.stroke({ color: strokeColor, width: strokeWidth, alpha: strokeAlpha });
             
             let txt = "";
             if (bet) txt = bet.status === 'won' ? `+${Math.round(bet.payout)}` : `-${Math.round(bet.amount)}`;
