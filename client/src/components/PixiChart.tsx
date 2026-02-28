@@ -1,9 +1,21 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Application, Container, Graphics, Text, TextStyle, FederatedPointerEvent, Rectangle } from 'pixi.js';
+import React, { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from 'react';
+import { Application, Container, Graphics, Text, FederatedPointerEvent } from 'pixi.js';
 import type { Candle, BetData, PredictionCellData, MarketRoomConfig } from '@trader-master/shared';
-// import { bsCallPrice, bsPutPrice, RISK_FREE_RATE, VOLATILITY } from '../utils/pricing';
 
 // const RECENT_SETTLEMENT_WINDOW = 20;
+
+export interface ChartViewport {
+    offsetX: number;
+    offsetY: number;
+    scaleX: number;
+    scaleY: number;
+}
+
+export interface ChartRef {
+    setViewport: (viewport: Partial<ChartViewport>) => void;
+    getViewport: () => ChartViewport;
+    resetView: () => void;
+}
 
 // Helper to find nice step size for price
 const getNicePriceStep = (minPrice: number, maxPrice: number, height: number) => {
@@ -119,16 +131,16 @@ interface PixiChartProps {
     onCellClick?: (cellId: string) => void;
 }
 
-export const PixiChart: React.FC<PixiChartProps> = ({
+export const PixiChart = forwardRef<ChartRef, PixiChartProps>(({
     data,
     bets,
     predictionCells,
     chartMode,
-    // roomConfig,
+    roomConfig,
     // lastTime,
     // lastPrice,
     onCellClick
-}) => {
+}, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const appRef = useRef<Application | null>(null);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -146,6 +158,10 @@ export const PixiChart: React.FC<PixiChartProps> = ({
     // Store handlers in ref to access latest in Pixi events
     const handlersRef = useRef({ onCellClick });
     handlersRef.current = { onCellClick };
+
+    // Store data in ref to access latest in Pixi events/draw loop
+    const dataRef = useRef({ predictionCells, bets, data, chartMode });
+    dataRef.current = { predictionCells, bets, data, chartMode };
 
     // Pixi Containers & Graphics
     const refs = useRef<{
@@ -197,12 +213,80 @@ export const PixiChart: React.FC<PixiChartProps> = ({
         return (y - offsetY) / scaleY;
     };
 
+    // Helper to calculate ideal scaleX to fit N columns in available width
+    const getScaleXForColumns = useCallback((columns: number, width: number) => {
+        const paddingX = width * 0.1; // 10% padding
+        const availableWidth = width - paddingX;
+        // Each column is predictionDuration seconds
+        const duration = roomConfig?.predictionDuration || 30;
+        const totalTime = columns * duration;
+        return availableWidth / totalTime;
+    }, [roomConfig]);
+
+    // Helper to calculate ideal scaleY to fit M layers in available height
+    const getScaleYForLayers = useCallback((layers: number, height: number) => {
+        const paddingY = height * 0.1; // 10% padding
+        const availableHeight = height - paddingY;
+        // Each layer is predictionPriceHeight units
+        const priceHeight = roomConfig?.predictionPriceHeight || 10; // Default 10 to match server template
+        // predictionLayers usually means N layers up AND N layers down, so total is 2 * N
+        const totalHeight = layers * 2 * priceHeight;
+        return -availableHeight / totalHeight; // Negative for Y-up
+    }, [roomConfig]);
+
     const autoScale = useCallback((currentData: Candle[]) => {
         if (!appRef.current || currentData.length === 0) return;
         
         const width = appRef.current.screen.width;
         const height = appRef.current.screen.height;
 
+        // Use room configuration if available
+        if (roomConfig) {
+            const layers = roomConfig.predictionLayers || 6; // Default 6 layers (was 12)
+            const initialColumns = roomConfig.predictionInitialColumns || 8; // Default 8 columns
+            const priceHeight = roomConfig.predictionPriceHeight || 10;
+            const duration = roomConfig.predictionDuration || 30;
+            
+            console.log('[PixiChart] AutoScaling with config:', { layers, initialColumns, roomConfig });
+
+            // 1. Calculate Scale Y based on layers (Primary constraint: fit layers in height)
+            const scaleY = getScaleYForLayers(layers, height); // Use layers directly? Or 2 * layers?
+
+            // 2. Calculate Scale X to enforce square aspect ratio
+            // unitHeight = priceHeight * abs(scaleY)
+            // unitWidth = duration * scaleX
+            // unitHeight = unitWidth => scaleX = (priceHeight * abs(scaleY)) / duration
+            const unitHeightPixels = priceHeight * Math.abs(scaleY);
+            const scaleX = unitHeightPixels / duration;
+            
+            console.log('[PixiChart] Enforcing Square Aspect Ratio:', { scaleY, scaleX, unitHeightPixels });
+
+            // ...
+            
+            // Center Price: Use last close price or middle of range
+            const lastClose = currentData[currentData.length - 1].close;
+            const centerY = height / 2;
+            const offsetY = centerY - lastClose * scaleY;
+            
+            // Align Time: Put latest time at the center (50% of width)
+            const lastTime = currentData[currentData.length - 1].time;
+            // Place last candle at 50% of width to leave room for future predictions
+            const targetX = width * 0.5;
+            const offsetX = targetX - lastTime * scaleX;
+
+            viewportRef.current = {
+                ...viewportRef.current,
+                scaleX,
+                scaleY,
+                offsetX,
+                offsetY,
+                initialized: true,
+                autoScaleY: false // Disable auto-scale when using config-based initial view
+            };
+            return;
+        }
+
+        // Fallback to data-based auto-scaling if no config
         // Calculate Price Range
         let minPrice = Infinity;
         let maxPrice = -Infinity;
@@ -214,6 +298,18 @@ export const PixiChart: React.FC<PixiChartProps> = ({
             if (c.low < minPrice) minPrice = c.low;
             if (c.high > maxPrice) maxPrice = c.high;
         });
+
+        // Include prediction cells in the price range calculation
+        // We use dataRef.current because predictionCells might not be in the dependency array or arguments
+        const cells = dataRef.current?.predictionCells || [];
+        if (subset.length > 0) {
+            const minTime = subset[0].time;
+            const relevantCells = cells.filter(cell => cell.endTime >= minTime);
+            relevantCells.forEach(cell => {
+                if (cell.lowPrice < minPrice) minPrice = cell.lowPrice;
+                if (cell.highPrice > maxPrice) maxPrice = cell.highPrice;
+            });
+        }
         
         if (minPrice === Infinity) { minPrice = 0; maxPrice = 100; }
         const priceRange = maxPrice - minPrice || 1;
@@ -511,8 +607,8 @@ export const PixiChart: React.FC<PixiChartProps> = ({
 
     // We need to attach/detach this listener when predictionCells changes?
     // Or just use a mutable ref for predictionCells.
-    const dataRef = useRef({ predictionCells, bets, data, chartMode });
-    dataRef.current = { predictionCells, bets, data, chartMode };
+    // const dataRef = useRef({ predictionCells, bets, data, chartMode });
+    // dataRef.current = { predictionCells, bets, data, chartMode };
     
     // Attach listener to stage? 
     // Since stage is created once, we can use a proxy function.
@@ -598,6 +694,16 @@ export const PixiChart: React.FC<PixiChartProps> = ({
             visibleData.forEach(d => {
                 if (d.low < minP) minP = d.low;
                 if (d.high > maxP) maxP = d.high;
+            });
+            
+            // Also include visible prediction cells in the auto-scale range
+            const visibleCells = predictionCells.filter(c => 
+                c.endTime >= tStart && c.startTime <= tEnd
+            );
+            
+            visibleCells.forEach(c => {
+                if (c.lowPrice < minP) minP = c.lowPrice;
+                if (c.highPrice > maxP) maxP = c.highPrice;
             });
             
             if (minP !== Infinity) {
@@ -879,5 +985,47 @@ export const PixiChart: React.FC<PixiChartProps> = ({
         }
     }, [data, autoScale]);
 
+    // Apply Room Config when it loads
+    useEffect(() => {
+        if (roomConfig && data.length > 0 && appRef.current) {
+            // Force auto-scale when room config is available to ensure correct initial view
+            // This handles the case where data loaded before config
+            autoScale(data);
+        }
+    }, [roomConfig]); // Only run when roomConfig object changes
+
+    // Unified helper to update viewport
+    const updateViewportState = useCallback((updates: Partial<ChartViewport>, disableAutoScaleY: boolean = false) => {
+        viewportRef.current = {
+            ...viewportRef.current,
+            ...updates
+        };
+        
+        if (disableAutoScaleY) {
+            viewportRef.current.autoScaleY = false;
+        }
+    }, []);
+
+    // Expose chart control methods
+    useImperativeHandle(ref, () => ({
+        setViewport: (viewport: Partial<ChartViewport>) => {
+            // Check if Y-axis is being modified to determine if we should disable autoScale
+            const shouldDisableAuto = viewport.scaleY !== undefined || viewport.offsetY !== undefined;
+            updateViewportState(viewport, shouldDisableAuto);
+        },
+        getViewport: () => ({
+            offsetX: viewportRef.current.offsetX,
+            offsetY: viewportRef.current.offsetY,
+            scaleX: viewportRef.current.scaleX,
+            scaleY: viewportRef.current.scaleY
+        }),
+        resetView: () => {
+            viewportRef.current.autoScaleY = true;
+            if (dataRef.current.data.length > 0) {
+                autoScale(dataRef.current.data);
+            }
+        }
+    }));
+
     return <div ref={containerRef} style={{ width: '100%', height: '100%', overflow: 'hidden' }} />;
-};
+});

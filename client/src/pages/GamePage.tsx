@@ -1,13 +1,25 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import * as Colyseus from '@colyseus/sdk';
-import { MarketState, MessageType } from '@trader-master/shared';
+import { MarketState, MessageType, PREDICTION_LAYERS, PREDICTION_INITIAL_COLUMNS, PREDICTION_PRICE_HEIGHT, PREDICTION_DURATION, PREDICTION_GENERATION_INTERVAL, PREDICTION_BET_LOCK_WINDOW } from '@trader-master/shared';
 import type { Candle } from '@trader-master/shared';
 import { PixiChart } from '../components/PixiChart';
 import { useGameStore } from '../store/useGameStore';
 import { syncRoomState } from '../store/syncRoomState';
 import { getRoomMetadata } from '../api/room';
 import '../App.css';
+
+// Default Room Config (Fallback)
+const DEFAULT_ROOM_CONFIG = {
+    roomName: 'default',
+    symbol: 'XAUUSD',
+    predictionDuration: PREDICTION_DURATION,
+    predictionPriceHeight: PREDICTION_PRICE_HEIGHT,
+    predictionGenerationInterval: PREDICTION_GENERATION_INTERVAL,
+    predictionLayers: PREDICTION_LAYERS,
+    predictionInitialColumns: PREDICTION_INITIAL_COLUMNS,
+    predictionBetLockWindow: PREDICTION_BET_LOCK_WINDOW
+};
 
 // Initialize Colyseus Client
 // Hardcode for testing connection issue
@@ -30,7 +42,7 @@ export function GamePage() {
   const bets = useGameStore((state) => state.bets);
   const predictionCells = useGameStore((state) => state.predictionCells);
   const balance = useGameStore((state) => state.balance);
-  const roomConfig = useGameStore((state) => state.roomConfig);
+  const roomConfig = useGameStore((state) => state.roomConfig) || DEFAULT_ROOM_CONFIG;
   const setRoomConfig = useGameStore((state) => state.setRoomConfig);
 
   // Calculate stats
